@@ -57,4 +57,8 @@ return [
         'api_key' => env('SERPER_API_KEY'),
     ],
 
+    'social' => [
+        'active' => env('SOCIAL_ACTIVE', false),
+    ],
+
 ];

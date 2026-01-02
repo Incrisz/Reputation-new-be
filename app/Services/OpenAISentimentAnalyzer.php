@@ -209,6 +209,27 @@ class OpenAISentimentAnalyzer
         string $snippetOrText
     ): string
     {
+        $socialActive = (bool) config('services.social.active');
+        $socialRules = $socialActive
+            ? <<<RULES
+7. SOCIAL MEDIA RULES (VERY IMPORTANT)
+- SOCIAL_OFFICIAL pages (company profiles, brand pages):
+  -> Always NEUTRAL unless explicit praise or criticism exists.
+- SOCIAL_POST pages (individual public posts, threads, comments):
+  -> Express direct personal opinion.
+  -> Complaints, criticism, sarcasm -> NEGATIVE
+  -> Praise, recommendations, excitement -> POSITIVE
+  -> Announcements without opinion -> NEUTRAL
+- Emojis, strong language, slang, or emotional tone MUST influence sentiment.
+RULES
+            : <<<RULES
+7. SOCIAL MEDIA POSTS
+- Public social media posts express direct sentiment.
+- Complaints, rants, or viral criticism -> NEGATIVE
+- Praise, recommendations, or celebration -> POSITIVE
+- Announcements without opinion -> NEUTRAL
+RULES;
+
         return <<<PROMPT
 You are a reputation sentiment classification engine.
 
@@ -254,6 +275,15 @@ CRITICAL SENTIMENT RULES (READ CAREFULLY):
 5. KEYWORD OVERRIDES
 - Words like "complaint", "poor", "bad", "worst", "scam", "terrible" -> NEGATIVE
 - Words like "great", "excellent", "amazing", "best", "love" -> POSITIVE
+
+6. NEWS ARTICLES
+- If the source is a news article:
+  - Legal action, fines, recalls, scandals -> NEGATIVE
+  - Awards, rankings, innovations -> POSITIVE
+  - Neutral reporting -> NEUTRAL
+- News articles carry higher reputational impact than reviews.
+
+{$socialRules}
 
 THEMES:
 - If sentiment is POSITIVE or NEGATIVE, extract 1-3 short themes.

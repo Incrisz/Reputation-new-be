@@ -63,32 +63,26 @@ class SerperSearchService
      */
     private function generateSearchQueries(string $businessName, ?string $location = null): array
     {
+        $locationSuffix = $location ? " {$location}" : '';
+
         $queries = [
-            "{$businessName} {$location}",
-            "{$businessName} {$location} reviews",
+            "{$businessName}{$locationSuffix}",
+            "{$businessName}{$locationSuffix} reviews",
             "{$businessName} complaints",
             "{$businessName} site:yelp.com",
             "{$businessName} site:google.com/maps",
             "{$businessName} site:reddit.com",
             "{$businessName} news",
-            "{$businessName} lawsuit OR fraud OR scandal"
+            "{$businessName} lawsuit OR fraud OR scandal",
         ];
 
-        // Remove location from queries where not applicable
-        if (!$location) {
-            $queries = [
-                $businessName,
-                "{$businessName} reviews",
-                "{$businessName} complaints",
-                "{$businessName} site:yelp.com",
-                "{$businessName} site:google.com/maps",
-                "{$businessName} site:reddit.com",
-                "{$businessName} news",
-                "{$businessName} lawsuit OR fraud OR scandal"
-            ];
-        }
+        $queries = array_merge(
+            $queries,
+            $this->getNewsQueries($businessName),
+            $this->getSocialQueries($businessName)
+        );
 
-        return $queries;
+        return array_values(array_unique($queries));
     }
 
     /**
@@ -136,6 +130,22 @@ class SerperSearchService
                 }
             }
 
+            // Extract news results when present
+            if (isset($data['news']) && is_array($data['news'])) {
+                foreach ($data['news'] as $result) {
+                    $mention = [
+                        'url' => $result['link'] ?? '',
+                        'title' => $result['title'] ?? '',
+                        'snippet' => $result['snippet'] ?? '',
+                        'source' => $this->determineSource($result['link'] ?? ''),
+                        'source_weight' => $this->getSourceWeight($this->determineSource($result['link'] ?? '')),
+                        'content' => null
+                    ];
+
+                    $mentions[] = $mention;
+                }
+            }
+
             return [
                 'success' => true,
                 'mentions' => $mentions
@@ -163,15 +173,20 @@ class SerperSearchService
         $highSignalDomains = [
             'yelp.com',
             'google.com',
+            'news.google.com',
             'trustpilot.com',
             'bbb.org',
             'reddit.com',
             'twitter.com',
+            'x.com',
             'facebook.com',
             'linkedin.com',
             'instagram.com',
+            'threads.net',
             'tiktok.com',
-            'youtube.com'
+            'youtube.com',
+            'prnewswire.com',
+            'businesswire.com'
         ];
 
         $reputationKeywords = [
@@ -242,7 +257,8 @@ class SerperSearchService
         if (strpos($url, 'cnn.com') !== false || strpos($url, 'bbc.com') !== false ||
             strpos($url, 'reuters.com') !== false || strpos($url, 'apnews.com') !== false ||
             strpos($url, 'forbes.com') !== false || strpos($url, 'wsj.com') !== false ||
-            strpos($url, 'nytimes.com') !== false) {
+            strpos($url, 'nytimes.com') !== false || strpos($url, 'news.google.com') !== false ||
+            strpos($url, 'prnewswire.com') !== false || strpos($url, 'businesswire.com') !== false) {
             return 'news';
         }
 
@@ -260,7 +276,8 @@ class SerperSearchService
         // Social
         if (strpos($url, 'twitter.com') !== false || strpos($url, 'facebook.com') !== false ||
             strpos($url, 'instagram.com') !== false || strpos($url, 'tiktok.com') !== false ||
-            strpos($url, 'linkedin.com') !== false) {
+            strpos($url, 'linkedin.com') !== false || strpos($url, 'x.com') !== false ||
+            strpos($url, 'threads.net') !== false) {
             return 'social';
         }
 
@@ -284,6 +301,40 @@ class SerperSearchService
             'blog' => 0.4,
             default => 0.4
         };
+    }
+
+    /**
+     * Build targeted news queries
+     *
+     * @param string $businessName
+     * @return array
+     */
+    private function getNewsQueries(string $businessName): array
+    {
+        return [
+            "{$businessName} site:news.google.com",
+            "{$businessName} site:reuters.com OR site:apnews.com OR site:bbc.com OR site:cnn.com",
+            "{$businessName} site:prnewswire.com OR site:businesswire.com",
+        ];
+    }
+
+    /**
+     * Build targeted social queries
+     *
+     * @param string $businessName
+     * @return array
+     */
+    private function getSocialQueries(string $businessName): array
+    {
+        return [
+            "{$businessName} site:twitter.com OR site:x.com",
+            "{$businessName} site:facebook.com",
+            "{$businessName} site:linkedin.com",
+            "{$businessName} site:instagram.com",
+            "{$businessName} site:tiktok.com",
+            "{$businessName} site:threads.net",
+            "{$businessName} site:youtube.com",
+        ];
     }
 
     /**
