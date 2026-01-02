@@ -48,7 +48,11 @@ class ReputationScanService
             }
 
             // Step 3: Analyze sentiment
-            $analysis = $this->sentimentAnalyzer->analyze($searchResult['mentions']);
+            $analysis = $this->sentimentAnalyzer->analyze(
+                $searchResult['mentions'],
+                $businessName,
+                $industry
+            );
 
             // Calculate reputation score
             $scoreResult = $this->scoringEngine->calculateScore(

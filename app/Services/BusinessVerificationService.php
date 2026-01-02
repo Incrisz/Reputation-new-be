@@ -68,12 +68,21 @@ class BusinessVerificationService
                         ])
                         ->get($candidateUrl);
 
+                    \Log::info('Website verification response', [
+                        'url' => $candidateUrl,
+                        'status' => $response->status(),
+                    ]);
+
                     if ($response->successful()) {
                         $successfulResponse = $response;
                         $website = $candidateUrl;
                         break;
                     }
                 } catch (\Exception $e) {
+                    \Log::warning('Website verification request failed', [
+                        'url' => $candidateUrl,
+                        'error' => $e->getMessage(),
+                    ]);
                     continue;
                 }
             }

@@ -32,7 +32,7 @@ class OpenAISentimentAnalyzer
      * @param array $mentions
      * @return array
      */
-    public function analyze(array $mentions): array
+    public function analyze(array $mentions, string $businessName = '', ?string $industry = null): array
     {
         $analysis = [
             'sentiment_breakdown' => [
@@ -69,7 +69,7 @@ class OpenAISentimentAnalyzer
                 }
 
                 // Analyze this mention
-                $result = $this->analyzeMention($mention);
+                $result = $this->analyzeMention($mention, $businessName, $industry);
 
                 if ($result['success']) {
                     // Track sentiment
@@ -146,7 +146,7 @@ class OpenAISentimentAnalyzer
      * @param float $sourceWeight
      * @return array
      */
-    private function analyzeMention(array $mention): array
+    private function analyzeMention(array $mention, string $businessName, ?string $industry): array
     {
         try {
             $content = $mention['content'] ?? '';
@@ -154,8 +154,18 @@ class OpenAISentimentAnalyzer
             $url = $mention['url'] ?? '';
             $title = $mention['title'] ?? '';
             $snippet = $mention['snippet'] ?? '';
+            $snippetOrText = $content !== '' ? $content : $snippet;
+            $businessName = trim($businessName) !== '' ? $businessName : 'Unknown';
+            $industryText = $industry ?? 'Unknown';
 
-            $prompt = $this->buildAnalysisPrompt($content, $source, $url, $title, $snippet);
+            $prompt = $this->buildAnalysisPrompt(
+                $businessName,
+                $industryText,
+                $source,
+                $url,
+                $title,
+                $snippetOrText
+            );
             
             $response = $this->callLLM($prompt);
 
@@ -191,58 +201,62 @@ class OpenAISentimentAnalyzer
      * @return string
      */
     private function buildAnalysisPrompt(
-        string $content,
+        string $businessName,
+        string $industry,
         string $source,
         string $url,
         string $title,
-        string $snippet
+        string $snippetOrText
     ): string
     {
         return <<<PROMPT
-You are a reputation analysis engine.
+You are a sentiment classification engine.
+
+You MUST return a valid JSON object.
+You MUST NOT return an empty response.
+You MUST NOT explain your reasoning.
+You MUST NOT return markdown.
 
 You are analyzing ONE online mention of a business.
 
-Your job is to:
-1. Determine sentiment (positive, negative, or neutral)
-2. Extract concrete themes if sentiment is not neutral
-3. Justify sentiment based on visible signals (ratings, language, context)
+BUSINESS:
+- Name: {$businessName}
+- Industry: {$industry}
 
-IMPORTANT RULES:
-- Do NOT default to neutral unless there is truly no opinion.
-- Review pages (Trustpilot, Yelp, BBB, Google Reviews, Glassdoor, Indeed) almost always express sentiment.
-- Numeric ratings MUST influence sentiment:
-  - Rating >= 4.0 -> positive
-  - Rating between 2.5 and 3.9 -> mixed / neutral
-  - Rating < 2.5 -> negative
-- Words like "complaint", "bad", "terrible", "poor", "scam", "worst" -> negative
-- Words like "great", "excellent", "amazing", "love", "best" -> positive
-- Official company pages without opinions -> neutral
-
-SOURCE CONTEXT:
+MENTION:
 - Source type: {$source}
 - URL: {$url}
 - Page title: {$title}
-- Search snippet (if available): {$snippet}
+- Snippet or extracted text:
+{$snippetOrText}
 
-CONTENT:
-{$content}
+RULES FOR SENTIMENT:
+- If this is a review, complaints, forum, or discussion page, sentiment is NEVER neutral by default.
+- Numeric ratings determine sentiment:
+  - Rating >= 4.0 -> positive
+  - Rating between 2.5 and 3.9 -> neutral
+  - Rating < 2.5 -> negative
+- Words like "complaint", "poor", "bad", "worst", "scam", "terrible" -> negative
+- Words like "great", "excellent", "love", "best", "amazing" -> positive
+- Official company pages with no opinions -> neutral
 
-GUIDELINES:
-- If the page is a review site, infer sentiment from the page purpose even if full reviews are not visible.
-- If multiple opinions are implied, choose the dominant sentiment.
+THEMES:
+- If sentiment is positive or negative, extract 1-3 short themes.
+- Themes must be concrete (e.g. "customer support", "pricing", "work culture").
 - If sentiment is neutral, themes MUST be an empty array.
-- Do not explain your reasoning.
-- Do not return text outside JSON.
 
-Provide your response in this exact JSON format:
+OUTPUT FORMAT (STRICT -- RETURN ONLY THIS JSON):
+
 {
-  "sentiment": "positive" | "negative" | "neutral",
-  "themes": ["theme1", "theme2"],
-  "justification": "Short signal-based justification"
+  "sentiment": "positive | negative | neutral",
+  "confidence": 0.0,
+  "themes": []
 }
 
-Only output the JSON, no other text.
+FAILSAFE:
+- If information is limited, infer sentiment from the page purpose.
+- If unsure, choose the most likely sentiment instead of neutral.
+- NEVER return an empty response.
 PROMPT;
     }
 
