@@ -1,0 +1,471 @@
+openapi: 3.0.0
+info:
+  title: Reputation AI API
+  description: |
+    # Reputation AI - Business Reputation Management API
+    
+    A powerful REST API for analyzing business online reputation by searching the web, 
+    analyzing sentiment, extracting themes, calculating reputation scores, and providing 
+    AI-powered recommendations.
+    
+    ## Key Features
+    - **Business Verification**: Verify via website OR phone+location (no Google dependency)
+    - **Web Scanning**: 8 targeted search queries to find all mentions
+    - **Sentiment Analysis**: Positive/negative/neutral analysis via LLM (OpenAI or Claude)
+    - **Reputation Scoring**: 0-100 score with source credibility weighting
+    - **AI Recommendations**: Actionable improvement suggestions
+    - **Rate Limited**: 10 requests per minute per IP
+    
+    ## API Architecture
+    - **Backend**: Laravel PHP
+    - **LLM Providers**: OpenAI (GPT-4) or OpenRouter (Claude)
+    - **Search API**: Serper for web discovery
+    - **Source Weighting**: News (1.0), Reviews (0.8), Forums (0.6), Social (0.5), Blogs (0.4)
+    
+  version: 1.0.0
+  contact:
+    name: Reputation AI Support
+    email: support@reputation-ai.com
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development server
+  - url: https://api.reputation-ai.com
+    description: Production server
+
+tags:
+  - name: Reputation
+    description: Business reputation scanning and analysis
+    externalDocs:
+      description: Learn more
+      url: https://docs.reputation-ai.com
+
+paths:
+  /api/reputation/scan:
+    post:
+      tags:
+        - Reputation
+      summary: Scan business reputation
+      description: |
+        ## Overview
+        Analyzes the online reputation of a business by:
+        1. Verifying business identity (website OR phone+location)
+        2. Searching the web for mentions (8 targeted queries)
+        3. Analyzing sentiment and extracting themes
+        4. Calculating reputation score (0-100) with source weighting
+        5. Generating AI-powered improvement recommendations
+        
+        ## Valid Input Combinations
+        - **Website Only**: System extracts business name from HTML
+        - **Website + Name**: System verifies name appears on website
+        - **Phone + Location**: Phone is unique identifier per business
+        - **Phone + Location + Name**: Maximum context for search
+        
+        ## Response Time
+        Typical response time: 15-45 seconds (depends on number of mentions found)
+        
+        ## Rate Limiting
+        10 requests per minute per IP address
+        
+        ## Errors
+        See error responses below for all possible error codes and solutions.
+        
+      operationId: scanReputation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReputationScanRequest'
+            examples:
+              websiteOnly:
+                summary: Website-based verification (simplest)
+                value:
+                  website: apple.com
+              websiteWithName:
+                summary: Website with business name
+                value:
+                  business_name: Apple
+                  website: apple.com
+                  industry: Technology
+              phoneLocation:
+                summary: Phone + location (no website needed)
+                value:
+                  phone: "+1-415-123-4567"
+                  location: San Francisco, CA
+              phoneLocationName:
+                summary: Phone + location + business name
+                value:
+                  business_name: Apple Restaurant
+                  phone: "+1-415-123-4567"
+                  location: San Francisco, CA
+      responses:
+        '200':
+          description: Successful reputation scan
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReputationScanResponse'
+              example:
+                status: success
+                business_name: Apple
+                verified_website: https://apple.com
+                verified_location: null
+                verified_phone: null
+                scan_date: "2025-12-31T10:00:00Z"
+                results:
+                  reputation_score: 85
+                  sentiment_breakdown:
+                    positive: 67
+                    negative: 20
+                    neutral: 13
+                  top_themes:
+                    - theme: great products
+                      frequency: 12
+                      sentiment: positive
+                    - theme: excellent service
+                      frequency: 8
+                      sentiment: positive
+                    - theme: high prices
+                      frequency: 5
+                      sentiment: negative
+                  top_mentions:
+                    - url: https://www.yelp.com/biz/apple-restaurant
+                      title: "Amazing experience! Highly recommend"
+                      sentiment: positive
+                      source: reviews
+                    - url: https://www.reddit.com/r/foodreviews/
+                      title: "Best in the city"
+                      sentiment: positive
+                      source: forum
+                  recommendations:
+                    - Focus on maintaining product quality excellence
+                    - Highlight positive customer feedback in marketing
+                    - Address pricing concerns in marketing materials
+        '400':
+          description: Invalid domain or bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                invalidDomain:
+                  summary: Domain is not accessible
+                  value:
+                    status: error
+                    code: INVALID_DOMAIN
+                    message: Domain is not accessible
+                    details: Please check the website URL
+        '403':
+          description: Domain verification failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                code: DOMAIN_VERIFICATION_FAILED
+                message: Could not verify business name on website
+                details: Please ensure the business name appears on your website
+        '404':
+          description: Business not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                code: BUSINESS_NOT_FOUND
+                message: No mentions found for this business
+                details: null
+        '422':
+          description: Ambiguous business or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                ambiguousBusiness:
+                  summary: Business name alone is too ambiguous
+                  value:
+                    status: error
+                    code: AMBIGUOUS_BUSINESS
+                    message: Business name alone is too ambiguous
+                    details: Provide website OR (phone + location)
+                validationError:
+                  summary: Invalid request parameters
+                  value:
+                    status: error
+                    code: VALIDATION_ERROR
+                    message: Invalid request parameters
+                    details:
+                      website:
+                        - The website field must be a valid URL
+                      phone:
+                        - The phone field format is invalid
+        '429':
+          description: Rate limit exceeded (10 requests per minute)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Too Many Requests
+        '500':
+          description: Server error during analysis
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                status: error
+                code: ANALYSIS_ERROR
+                message: An error occurred during analysis
+
+components:
+  schemas:
+    ReputationScanRequest:
+      type: object
+      title: Reputation Scan Request
+      description: Request body for business reputation scanning
+      properties:
+        business_name:
+          type: string
+          nullable: true
+          minLength: 2
+          maxLength: 100
+          description: Business name (optional - can be extracted from website or used for search context)
+          example: Apple
+        website:
+          type: string
+          nullable: true
+          format: url
+          description: Business website URL (required if phone/location not provided)
+          example: apple.com
+        phone:
+          type: string
+          nullable: true
+          pattern: '^\+?[0-9\s\-\(\)]+$'
+          description: Business phone number (required if website not provided)
+          example: "+1-415-123-4567"
+        location:
+          type: string
+          nullable: true
+          minLength: 3
+          maxLength: 100
+          description: Business location - city, state (required with phone)
+          example: San Francisco, CA
+        industry:
+          type: string
+          nullable: true
+          maxLength: 50
+          description: Business industry (optional - used for context)
+          example: Technology
+      required:
+        - oneOf:
+            - website
+            - [phone, location]
+
+    ReputationScanResponse:
+      type: object
+      title: Reputation Scan Response (Success)
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: success
+        business_name:
+          type: string
+          description: Verified business name
+          example: Apple
+        verified_website:
+          type: string
+          nullable: true
+          format: url
+          description: Verified website URL
+          example: https://apple.com
+        verified_location:
+          type: string
+          nullable: true
+          description: Verified business location
+          example: San Francisco, CA
+        verified_phone:
+          type: string
+          nullable: true
+          description: Verified business phone
+          example: "+1-415-123-4567"
+        scan_date:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of scan
+          example: "2025-12-31T10:00:00Z"
+        results:
+          $ref: '#/components/schemas/ReputationResults'
+
+    ReputationResults:
+      type: object
+      title: Reputation Analysis Results
+      properties:
+        reputation_score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Overall reputation score (0-100)
+          example: 85
+        sentiment_breakdown:
+          type: object
+          title: Sentiment Percentages
+          properties:
+            positive:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Percentage of positive mentions
+              example: 67
+            negative:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Percentage of negative mentions
+              example: 20
+            neutral:
+              type: integer
+              minimum: 0
+              maximum: 100
+              description: Percentage of neutral mentions
+              example: 13
+        top_themes:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/Theme'
+          description: Top themes mentioned about the business
+          example:
+            - theme: great products
+              frequency: 12
+              sentiment: positive
+            - theme: excellent service
+              frequency: 8
+              sentiment: positive
+        top_mentions:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/Mention'
+          description: Top mentions of the business online
+          example:
+            - url: https://www.yelp.com/biz/apple
+              title: "Great experience!"
+              sentiment: positive
+              source: reviews
+        recommendations:
+          type: array
+          maxItems: 5
+          items:
+            type: string
+          description: AI-generated recommendations for reputation improvement
+          example:
+            - Focus on maintaining product quality
+            - Leverage positive customer feedback in marketing
+            - Address common concerns proactively
+
+    Theme:
+      type: object
+      title: Business Theme
+      properties:
+        theme:
+          type: string
+          description: Topic or theme mentioned about business
+          example: great products
+        frequency:
+          type: integer
+          description: How many times this theme was mentioned
+          example: 12
+        sentiment:
+          type: string
+          enum: [positive, negative, neutral]
+          description: Overall sentiment for this theme
+          example: positive
+
+    Mention:
+      type: object
+      title: Business Mention
+      properties:
+        url:
+          type: string
+          format: uri
+          description: URL where mention was found
+          example: https://www.yelp.com/biz/apple
+        title:
+          type: string
+          description: Title or headline of mention
+          example: "Great experience!"
+        sentiment:
+          type: string
+          enum: [positive, negative, neutral]
+          description: Sentiment of this mention
+          example: positive
+        source:
+          type: string
+          enum: [news, reviews, forum, social, blog]
+          description: Source type of mention
+          example: reviews
+
+    ErrorResponse:
+      type: object
+      title: Error Response
+      properties:
+        status:
+          type: string
+          enum: [error]
+          example: error
+        code:
+          type: string
+          enum:
+            - AMBIGUOUS_BUSINESS
+            - INVALID_DOMAIN
+            - DOMAIN_VERIFICATION_FAILED
+            - BUSINESS_NOT_FOUND
+            - ANALYSIS_ERROR
+            - VALIDATION_ERROR
+            - RATE_LIMITED
+          description: Error code
+          example: AMBIGUOUS_BUSINESS
+        message:
+          type: string
+          description: Human-readable error message
+          example: Business name alone is too ambiguous
+        details:
+          type: object
+          nullable: true
+          description: Additional error details
+          example: Provide website OR (phone + location)
+
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      name: X-API-Key
+      in: header
+      description: API key for authentication (future use)
+
+  responses:
+    UnauthorizedError:
+      description: API key is missing or invalid
+
+    RateLimitError:
+      description: Rate limit exceeded (10 requests per minute)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message:
+                type: string
+
+externalDocs:
+  description: Find out more about Reputation AI
+  url: https://reputation-ai.com/docs

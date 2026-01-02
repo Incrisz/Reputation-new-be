@@ -1,0 +1,292 @@
+{
+    "openapi": "3.0.0",
+    "info": {
+        "title": "Reputation AI - Business Reputation Scanner API",
+        "description": "Comprehensive business reputation analysis using web search, sentiment analysis, and AI recommendations",
+        "contact": {
+            "email": "support@reputationai.com"
+        },
+        "license": {
+            "name": "Apache 2.0",
+            "url": "https://www.apache.org/licenses/LICENSE-2.0.html"
+        },
+        "version": "1.0.0"
+    },
+    "servers": [
+        {
+            "url": "http://127.0.0.1:8000",
+            "description": "API Server"
+        }
+    ],
+    "paths": {
+        "/api/reputation/scan": {
+            "post": {
+                "tags": [
+                    "Reputation Scan"
+                ],
+                "summary": "Scan and analyze business reputation",
+                "description": "Performs comprehensive business reputation analysis including web search, sentiment analysis, scoring, and AI-generated recommendations",
+                "operationId": "scanReputation",
+                "requestBody": {
+                    "description": "Business identification data",
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "required": [
+                                    "website"
+                                ],
+                                "properties": {
+                                    "website": {
+                                        "description": "Business website URL (required if phone not provided)",
+                                        "type": "string",
+                                        "example": "apple.com"
+                                    },
+                                    "phone": {
+                                        "description": "Business phone number (required if website not provided)",
+                                        "type": "string",
+                                        "example": "+1-555-123-4567"
+                                    },
+                                    "location": {
+                                        "description": "Business location (required if using phone)",
+                                        "type": "string",
+                                        "example": "San Francisco, CA"
+                                    },
+                                    "business_name": {
+                                        "description": "Optional business name for context",
+                                        "type": "string",
+                                        "example": "Apple Inc"
+                                    },
+                                    "industry": {
+                                        "description": "Optional industry classification",
+                                        "type": "string",
+                                        "example": "Technology"
+                                    }
+                                },
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful reputation scan",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "success"
+                                        },
+                                        "business_name": {
+                                            "type": "string",
+                                            "example": "Apple Inc"
+                                        },
+                                        "verified_website": {
+                                            "type": "string",
+                                            "example": "apple.com"
+                                        },
+                                        "scan_date": {
+                                            "type": "string",
+                                            "format": "date-time"
+                                        },
+                                        "results": {
+                                            "properties": {
+                                                "reputation_score": {
+                                                    "type": "number",
+                                                    "format": "float",
+                                                    "example": 87.5
+                                                },
+                                                "sentiment_breakdown": {
+                                                    "type": "object"
+                                                },
+                                                "key_themes": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "string"
+                                                    }
+                                                },
+                                                "mentions": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object"
+                                                    }
+                                                },
+                                                "recommendations": {
+                                                    "type": "array",
+                                                    "items": {
+                                                        "type": "object"
+                                                    }
+                                                }
+                                            },
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Missing required identification parameter",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "error_code": {
+                                            "type": "string",
+                                            "example": "MISSING_IDENTIFICATION"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Business not found or could not be verified",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "error_code": {
+                                            "type": "string",
+                                            "example": "BUSINESS_NOT_FOUND"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "error_code": {
+                                            "type": "string",
+                                            "example": "VALIDATION_ERROR"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        },
+                                        "errors": {
+                                            "type": "object"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "429": {
+                        "description": "Too many requests - rate limit exceeded",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "error_code": {
+                                            "type": "string",
+                                            "example": "RATE_LIMIT_EXCEEDED"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal server error during analysis",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "error_code": {
+                                            "type": "string",
+                                            "example": "ANALYSIS_ERROR"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service unavailable - external service error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "properties": {
+                                        "status": {
+                                            "type": "string",
+                                            "example": "error"
+                                        },
+                                        "error_code": {
+                                            "type": "string",
+                                            "example": "SERVICE_UNAVAILABLE"
+                                        },
+                                        "message": {
+                                            "type": "string"
+                                        }
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "components": {
+        "securitySchemes": {
+            "bearer": {
+                "type": "http",
+                "name": "Authorization",
+                "in": "header",
+                "scheme": "bearer"
+            }
+        }
+    },
+    "tags": [
+        {
+            "name": "Reputation Scan",
+            "description": "Reputation Scan"
+        }
+    ]
+}
