@@ -210,12 +210,12 @@ class OpenAISentimentAnalyzer
     ): string
     {
         return <<<PROMPT
-You are a sentiment classification engine.
+You are a reputation sentiment classification engine.
 
 You MUST return a valid JSON object.
 You MUST NOT return an empty response.
 You MUST NOT explain your reasoning.
-You MUST NOT return markdown.
+You MUST return ONLY JSON.
 
 You are analyzing ONE online mention of a business.
 
@@ -223,29 +223,44 @@ BUSINESS:
 - Name: {$businessName}
 - Industry: {$industry}
 
-MENTION:
+MENTION CONTEXT:
 - Source type: {$source}
 - URL: {$url}
 - Page title: {$title}
 - Snippet or extracted text:
 {$snippetOrText}
 
-RULES FOR SENTIMENT:
-- If this is a review, complaints, forum, or discussion page, sentiment is NEVER neutral by default.
-- Numeric ratings determine sentiment:
-  - Rating >= 4.0 -> positive
-  - Rating between 2.5 and 3.9 -> neutral
-  - Rating < 2.5 -> negative
-- Words like "complaint", "poor", "bad", "worst", "scam", "terrible" -> negative
-- Words like "great", "excellent", "love", "best", "amazing" -> positive
-- Official company pages with no opinions -> neutral
+CRITICAL SENTIMENT RULES (READ CAREFULLY):
+
+1. REVIEW AGGREGATOR BIAS (VERY IMPORTANT)
+- Pages from Trustpilot, Yelp, BBB, ConsumerAffairs, Google Reviews, or similar
+  are NOT neutral by default.
+- If the page is a review aggregation page AND no clear positive language exists,
+  sentiment should be NEGATIVE by default.
+- Neutral is allowed ONLY if the page clearly shows mixed or balanced sentiment.
+
+2. EMPLOYEE REVIEW BIAS
+- Glassdoor, Indeed, Comparably pages are POSITIVE by default
+  unless strong negative language exists.
+
+3. COMPLAINT / DISCUSSION PAGES
+- Forums, Reddit threads, complaint pages, and discussion boards
+  default to NEGATIVE unless clearly praising the business.
+
+4. OFFICIAL BRAND PAGES
+- Official company pages (LinkedIn, Apple.com, Feedback pages)
+  are NEUTRAL unless explicit praise or criticism is visible.
+
+5. KEYWORD OVERRIDES
+- Words like "complaint", "poor", "bad", "worst", "scam", "terrible" -> NEGATIVE
+- Words like "great", "excellent", "amazing", "best", "love" -> POSITIVE
 
 THEMES:
-- If sentiment is positive or negative, extract 1-3 short themes.
-- Themes must be concrete (e.g. "customer support", "pricing", "work culture").
-- If sentiment is neutral, themes MUST be an empty array.
+- If sentiment is POSITIVE or NEGATIVE, extract 1-3 short themes.
+- Themes must be concrete (e.g. "customer service", "pricing", "work culture").
+- If sentiment is NEUTRAL, themes MUST be an empty array.
 
-OUTPUT FORMAT (STRICT -- RETURN ONLY THIS JSON):
+OUTPUT FORMAT (STRICT):
 
 {
   "sentiment": "positive | negative | neutral",
@@ -253,9 +268,9 @@ OUTPUT FORMAT (STRICT -- RETURN ONLY THIS JSON):
   "themes": []
 }
 
-FAILSAFE:
-- If information is limited, infer sentiment from the page purpose.
-- If unsure, choose the most likely sentiment instead of neutral.
+FAILSAFE RULES:
+- If information is limited, infer sentiment from the TYPE OF PAGE.
+- When in doubt between neutral and negative for review pages, choose NEGATIVE.
 - NEVER return an empty response.
 PROMPT;
     }
