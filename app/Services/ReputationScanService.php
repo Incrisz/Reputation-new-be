@@ -8,17 +8,20 @@ class ReputationScanService
     private OpenAISentimentAnalyzer $sentimentAnalyzer;
     private ReputationScoringEngine $scoringEngine;
     private RecommendationGenerator $recommendationGenerator;
+    private ReputationAuditSynthesizer $auditSynthesizer;
 
     public function __construct(
         SerperSearchService $searchService,
         OpenAISentimentAnalyzer $sentimentAnalyzer,
         ReputationScoringEngine $scoringEngine,
-        RecommendationGenerator $recommendationGenerator
+        RecommendationGenerator $recommendationGenerator,
+        ReputationAuditSynthesizer $auditSynthesizer
     ) {
         $this->searchService = $searchService;
         $this->sentimentAnalyzer = $sentimentAnalyzer;
         $this->scoringEngine = $scoringEngine;
         $this->recommendationGenerator = $recommendationGenerator;
+        $this->auditSynthesizer = $auditSynthesizer;
     }
 
     /**
@@ -67,6 +70,16 @@ class ReputationScanService
                 $industry
             );
 
+            // Synthesize full reputation audit
+            $auditResult = $this->auditSynthesizer->synthesize(
+                $analysis,
+                $searchResult['mentions'],
+                $scoreResult,
+                $recommendations,
+                $businessName,
+                $industry
+            );
+
             // Compile final result
             return [
                 'success' => true,
@@ -80,7 +93,8 @@ class ReputationScanService
                     'sentiment_breakdown' => $analysis['sentiment_breakdown'],
                     'top_themes' => $analysis['themes'],
                     'top_mentions' => $analysis['top_mentions'],
-                    'recommendations' => $recommendations
+                    'recommendations' => $recommendations,
+                    'audit' => $auditResult['success'] ? $auditResult['audit'] : null
                 ]
             ];
 
