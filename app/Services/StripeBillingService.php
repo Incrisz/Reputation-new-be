@@ -358,7 +358,7 @@ class StripeBillingService
             return 'https:' . $value;
         }
 
-        if (preg_match('#^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}([/:?#].*)?$#', $value) === 1) {
+        if (preg_match('~^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}([/:?#].*)?$~', $value) === 1) {
             return 'https://' . $value;
         }
 
