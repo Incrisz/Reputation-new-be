@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -276,6 +277,135 @@ class AuthController extends Controller
         }
     }
 
+    public function profile(Request $request): JsonResponse
+    {
+        $user = $this->resolveUserFromRequest($request);
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User not found.',
+            ], 404);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'user' => $this->serializeUser($user),
+        ]);
+    }
+
+    public function updateProfile(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => ['nullable', 'integer', 'exists:users,id'],
+                'lookup_email' => ['nullable', 'string', 'email'],
+                'name' => ['sometimes', 'required', 'string', 'max:255'],
+                'email' => ['sometimes', 'required', 'string', 'email', 'max:255'],
+                'phone' => ['sometimes', 'nullable', 'string', 'max:32'],
+                'company' => ['sometimes', 'nullable', 'string', 'max:255'],
+                'location' => ['sometimes', 'nullable', 'string', 'max:255'],
+                'notification_preferences' => ['sometimes', 'nullable', 'array'],
+            ]);
+
+            $user = $this->resolveUserFromRequest($request);
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not found.',
+                ], 404);
+            }
+
+            if (array_key_exists('email', $validated)) {
+                $request->validate([
+                    'email' => [
+                        'required',
+                        'email',
+                        'max:255',
+                        Rule::unique('users', 'email')->ignore($user->id),
+                    ],
+                ]);
+            }
+
+            $fields = [
+                'name',
+                'email',
+                'phone',
+                'company',
+                'location',
+                'notification_preferences',
+            ];
+
+            $updates = [];
+            foreach ($fields as $field) {
+                if (array_key_exists($field, $validated)) {
+                    $updates[$field] = $validated[$field];
+                }
+            }
+
+            if (!empty($updates)) {
+                $user->fill($updates)->save();
+                $this->recordAuthEvent($user, $request, 'profile_update', 'email');
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Profile updated successfully.',
+                'user' => $this->serializeUser($user->fresh()),
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid profile update data.',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
+    public function changePassword(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => ['nullable', 'integer', 'exists:users,id'],
+                'lookup_email' => ['nullable', 'string', 'email'],
+                'current_password' => ['required', 'string'],
+                'password' => ['required', 'string', 'min:8', 'confirmed'],
+            ]);
+
+            $user = $this->resolveUserFromRequest($request);
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not found.',
+                ], 404);
+            }
+
+            if (!Hash::check($validated['current_password'], $user->password)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Current password is incorrect.',
+                ], 422);
+            }
+
+            $user->forceFill([
+                'password' => $validated['password'],
+                'remember_token' => Str::random(60),
+            ])->save();
+
+            $this->recordAuthEvent($user, $request, 'password_change', 'email');
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Password updated successfully.',
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid password change data.',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
     private function exchangeGoogleCodeForIdToken(string $code): ?string
     {
         $clientId = config('services.google.client_id');
@@ -343,6 +473,21 @@ class AuthController extends Controller
         return "{$frontendUrl}/reset-password?token={$tokenQuery}&email={$emailQuery}";
     }
 
+    private function resolveUserFromRequest(Request $request): ?User
+    {
+        $userId = $request->input('user_id', $request->query('user_id'));
+        if ($userId) {
+            return User::query()->find($userId);
+        }
+
+        $email = $request->input('lookup_email', $request->query('lookup_email'));
+        if ($email) {
+            return User::query()->where('email', $email)->first();
+        }
+
+        return null;
+    }
+
     private function updateLoginTracking(User $user, Request $request, string $provider): void
     {
         $user->forceFill([
@@ -378,6 +523,10 @@ class AuthController extends Controller
             'email' => $user->email,
             'registration_provider' => $user->registration_provider,
             'avatar_url' => $user->avatar_url,
+            'phone' => $user->phone,
+            'company' => $user->company,
+            'location' => $user->location,
+            'notification_preferences' => $user->notification_preferences,
             'last_login_at' => $user->last_login_at?->toISOString(),
             'last_login_provider' => $user->last_login_provider,
         ];

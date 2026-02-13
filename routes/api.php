@@ -37,6 +37,18 @@ Route::middleware('api')->group(function () {
         ->middleware('throttle:10,1')
         ->name('auth.reset-password');
 
+    Route::get('/auth/profile', [AuthController::class, 'profile'])
+        ->middleware('throttle:30,1')
+        ->name('auth.profile');
+
+    Route::put('/auth/profile', [AuthController::class, 'updateProfile'])
+        ->middleware('throttle:20,1')
+        ->name('auth.profile.update');
+
+    Route::put('/auth/change-password', [AuthController::class, 'changePassword'])
+        ->middleware('throttle:10,1')
+        ->name('auth.change-password');
+
     // Reputation Scan Endpoint
     Route::post('/reputation/scan', [ReputationController::class, 'scan'])
         ->middleware('throttle:10,1')

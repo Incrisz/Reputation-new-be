@@ -25,6 +25,10 @@ class User extends Authenticatable
         'registration_provider',
         'google_id',
         'avatar_url',
+        'phone',
+        'company',
+        'location',
+        'notification_preferences',
         'last_login_at',
         'last_login_ip',
         'last_login_user_agent',
@@ -51,6 +55,7 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'notification_preferences' => 'array',
             'last_login_at' => 'datetime',
         ];
     }

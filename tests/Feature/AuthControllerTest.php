@@ -261,4 +261,119 @@ class AuthControllerTest extends TestCase
             ->assertJsonPath('status', 'error')
             ->assertJsonPath('message', 'Invalid or expired reset token.');
     }
+
+    public function test_profile_returns_user_data(): void
+    {
+        $user = User::factory()->create([
+            'name' => 'Profile User',
+            'email' => 'profile@example.com',
+            'phone' => '+15551234567',
+            'company' => 'Acme Corp',
+            'location' => 'San Francisco, CA',
+            'notification_preferences' => [
+                'email' => true,
+                'weeklyReport' => false,
+            ],
+        ]);
+
+        $response = $this->getJson('/api/auth/profile?user_id='.$user->id);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('user.name', 'Profile User')
+            ->assertJsonPath('user.phone', '+15551234567')
+            ->assertJsonPath('user.company', 'Acme Corp');
+    }
+
+    public function test_update_profile_updates_user_details(): void
+    {
+        $user = User::factory()->create([
+            'name' => 'Old Name',
+            'email' => 'old@example.com',
+        ]);
+
+        $response = $this->putJson('/api/auth/profile', [
+            'user_id' => $user->id,
+            'name' => 'New Name',
+            'email' => 'new@example.com',
+            'phone' => '+15559876543',
+            'company' => 'New Co',
+            'location' => 'Austin, TX',
+            'notification_preferences' => [
+                'email' => true,
+                'weeklyReport' => true,
+            ],
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('status', 'success')
+            ->assertJsonPath('user.name', 'New Name')
+            ->assertJsonPath('user.email', 'new@example.com')
+            ->assertJsonPath('user.company', 'New Co');
+
+        $this->assertDatabaseHas('users', [
+            'id' => $user->id,
+            'name' => 'New Name',
+            'email' => 'new@example.com',
+            'phone' => '+15559876543',
+            'company' => 'New Co',
+            'location' => 'Austin, TX',
+        ]);
+
+        $this->assertDatabaseHas('user_auth_events', [
+            'user_id' => $user->id,
+            'event_type' => 'profile_update',
+            'provider' => 'email',
+        ]);
+    }
+
+    public function test_change_password_requires_correct_current_password(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'changepw@example.com',
+            'password' => 'secret123',
+        ]);
+
+        $response = $this->putJson('/api/auth/change-password', [
+            'user_id' => $user->id,
+            'current_password' => 'bad-current-password',
+            'password' => 'new-password-123',
+            'password_confirmation' => 'new-password-123',
+        ]);
+
+        $response
+            ->assertStatus(422)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('message', 'Current password is incorrect.');
+    }
+
+    public function test_change_password_updates_password_and_records_event(): void
+    {
+        $user = User::factory()->create([
+            'email' => 'changepw2@example.com',
+            'password' => 'secret123',
+        ]);
+
+        $response = $this->putJson('/api/auth/change-password', [
+            'user_id' => $user->id,
+            'current_password' => 'secret123',
+            'password' => 'new-password-456',
+            'password_confirmation' => 'new-password-456',
+        ]);
+
+        $response
+            ->assertOk()
+            ->assertJsonPath('status', 'success');
+
+        $user->refresh();
+        $this->assertTrue(Hash::check('new-password-456', $user->password));
+
+        $this->assertDatabaseHas('user_auth_events', [
+            'user_id' => $user->id,
+            'event_type' => 'password_change',
+            'provider' => 'email',
+        ]);
+    }
 }
