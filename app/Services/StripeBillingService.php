@@ -39,8 +39,24 @@ class StripeBillingService
         }
 
         $interval = $billingPeriod === 'annual' ? 'year' : 'month';
-        $successUrl = $this->withCheckoutSessionPlaceholder((string) config('services.stripe.success_url'));
-        $cancelUrl = (string) config('services.stripe.cancel_url');
+        $successUrl = $this->resolveCheckoutRedirectUrl(
+            (string) config('services.stripe.success_url'),
+            '/pricing?checkout=success',
+            true
+        );
+        $cancelUrl = $this->resolveCheckoutRedirectUrl(
+            (string) config('services.stripe.cancel_url'),
+            '/pricing?checkout=cancel',
+            false
+        );
+
+        if ($successUrl === '' || $cancelUrl === '') {
+            return [
+                'success' => false,
+                'status_code' => 422,
+                'message' => 'Stripe checkout redirect URLs are not configured correctly.',
+            ];
+        }
 
         $productData = [
             'name' => "{$plan->name} Plan",
@@ -295,6 +311,88 @@ class StripeBillingService
 
         $separator = str_contains($url, '?') ? '&' : '?';
         return $url . $separator . 'session_id={CHECKOUT_SESSION_ID}';
+    }
+
+    private function resolveCheckoutRedirectUrl(
+        string $configuredUrl,
+        string $fallbackPath,
+        bool $appendSessionPlaceholder
+    ): string {
+        $target = trim($configuredUrl);
+        if ($target === '') {
+            $target = $fallbackPath;
+        }
+
+        $normalized = $this->normalizeToAbsoluteFrontendUrl($target);
+        if (!$this->isValidCheckoutUrl($normalized)) {
+            $normalized = $this->normalizeToAbsoluteFrontendUrl($fallbackPath);
+        }
+
+        if (!$this->isValidCheckoutUrl($normalized)) {
+            return '';
+        }
+
+        if (!$appendSessionPlaceholder) {
+            return $normalized;
+        }
+
+        return $this->withCheckoutSessionPlaceholder($normalized);
+    }
+
+    private function normalizeToAbsoluteFrontendUrl(string $value): string
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return '';
+        }
+
+        if (str_starts_with($value, '/')) {
+            return $this->frontendBaseUrl() . $value;
+        }
+
+        if (preg_match('#^https?://#i', $value) === 1) {
+            return $value;
+        }
+
+        if (str_starts_with($value, '//')) {
+            return 'https:' . $value;
+        }
+
+        if (preg_match('#^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}([/:?#].*)?$#', $value) === 1) {
+            return 'https://' . $value;
+        }
+
+        return '';
+    }
+
+    private function isValidCheckoutUrl(string $url): bool
+    {
+        if ($url === '') {
+            return false;
+        }
+
+        if (filter_var($url, FILTER_VALIDATE_URL) === false) {
+            return false;
+        }
+
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
+        $host = (string) parse_url($url, PHP_URL_HOST);
+
+        return in_array($scheme, ['http', 'https'], true) && $host !== '';
+    }
+
+    private function frontendBaseUrl(): string
+    {
+        $frontend = trim((string) config('app.frontend_url', ''));
+        if ($frontend === '') {
+            return 'http://localhost:3000';
+        }
+
+        if (!preg_match('#^https?://#i', $frontend)) {
+            $frontend = 'https://' . ltrim($frontend, '/');
+        }
+
+        return rtrim($frontend, '/');
     }
 
     private function getSecretKey(): string
