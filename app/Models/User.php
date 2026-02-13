@@ -27,6 +27,9 @@ class User extends Authenticatable
         'avatar_url',
         'phone',
         'company',
+        'industry',
+        'company_size',
+        'website',
         'location',
         'notification_preferences',
         'last_login_at',
@@ -63,5 +66,10 @@ class User extends Authenticatable
     public function authEvents(): HasMany
     {
         return $this->hasMany(UserAuthEvent::class);
+    }
+
+    public function auditRuns(): HasMany
+    {
+        return $this->hasMany(AuditRun::class);
     }
 }

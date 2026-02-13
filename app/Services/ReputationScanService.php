@@ -47,6 +47,14 @@ class ReputationScanService
             $placeId = $businessData['place_id'] ?? null;
             $skipPlaces = (bool) ($businessData['skip_places'] ?? false);
             $country = $businessData['country'] ?? null;
+            $selectedPlaceName = $businessData['selected_place_name'] ?? null;
+            $selectedPlaceAddress = $businessData['selected_place_address'] ?? null;
+            $selectedPlaceRating = isset($businessData['selected_place_rating'])
+                ? (float) $businessData['selected_place_rating']
+                : null;
+            $selectedPlaceReviewCount = isset($businessData['selected_place_review_count'])
+                ? (int) $businessData['selected_place_review_count']
+                : null;
 
             if ($skipPlaces) {
                 $placesProfile = [
@@ -62,6 +70,41 @@ class ReputationScanService
                     $website,
                     $placeId
                 );
+            }
+
+            // If Google Places details are incomplete, fall back to selected candidate data.
+            if (!is_array($placesProfile)) {
+                $placesProfile = [];
+            }
+
+            if (($placesProfile['name'] ?? null) === null && !empty($selectedPlaceName)) {
+                $placesProfile['name'] = $selectedPlaceName;
+            }
+            if (($placesProfile['address'] ?? null) === null && !empty($selectedPlaceAddress)) {
+                $placesProfile['address'] = $selectedPlaceAddress;
+            }
+            if (($placesProfile['rating'] ?? null) === null && $selectedPlaceRating !== null) {
+                $placesProfile['rating'] = $selectedPlaceRating;
+            }
+            if (($placesProfile['review_count'] ?? null) === null && $selectedPlaceReviewCount !== null) {
+                $placesProfile['review_count'] = $selectedPlaceReviewCount;
+            }
+            if (($placesProfile['place_id'] ?? null) === null && !empty($placeId)) {
+                $placesProfile['place_id'] = $placeId;
+            }
+
+            if (
+                !($placesProfile['found'] ?? false)
+                && (
+                    !empty($placesProfile['name'])
+                    || !empty($placesProfile['address'])
+                    || isset($placesProfile['rating'])
+                    || isset($placesProfile['review_count'])
+                )
+            ) {
+                $placesProfile['success'] = true;
+                $placesProfile['found'] = true;
+                $placesProfile['source'] = $placesProfile['source'] ?? 'google_places_candidate';
             }
 
             $visibilityScore = $this->onlineProfileScoringEngine->calculate(

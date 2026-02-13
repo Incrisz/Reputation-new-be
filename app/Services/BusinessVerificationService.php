@@ -265,6 +265,22 @@ class BusinessVerificationService
         $result['business_data']['place_id'] = $data['place_id'] ?? null;
         $result['business_data']['skip_places'] = (bool) ($data['skip_places'] ?? false);
         $result['business_data']['country'] = $data['country'] ?? null;
+        $result['business_data']['selected_place_name'] = $data['selected_place_name'] ?? null;
+        $result['business_data']['selected_place_address'] = $data['selected_place_address'] ?? null;
+        $result['business_data']['selected_place_rating'] = isset($data['selected_place_rating'])
+            ? (float) $data['selected_place_rating']
+            : null;
+        $result['business_data']['selected_place_review_count'] = isset($data['selected_place_review_count'])
+            ? (int) $data['selected_place_review_count']
+            : null;
+
+        if (
+            !empty($data['selected_place_name'])
+            && !empty($data['place_id'])
+            && empty($data['skip_places'])
+        ) {
+            $result['business_data']['business_name'] = $data['selected_place_name'];
+        }
 
         if (!empty($data['location']) && empty($result['business_data']['verified_location'])) {
             $result['business_data']['verified_location'] = $data['location'];

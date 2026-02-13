@@ -49,8 +49,20 @@ Route::middleware('api')->group(function () {
         ->middleware('throttle:10,1')
         ->name('auth.change-password');
 
+    Route::post('/auth/logout', [AuthController::class, 'logout'])
+        ->middleware('throttle:10,1')
+        ->name('auth.logout');
+
     // Reputation Scan Endpoint
     Route::post('/reputation/scan', [ReputationController::class, 'scan'])
         ->middleware('throttle:10,1')
         ->name('reputation.scan');
+
+    Route::get('/reputation/history', [ReputationController::class, 'history'])
+        ->middleware('throttle:30,1')
+        ->name('reputation.history');
+
+    Route::get('/reputation/history/{audit}', [ReputationController::class, 'historyItem'])
+        ->middleware('throttle:30,1')
+        ->name('reputation.history.item');
 });

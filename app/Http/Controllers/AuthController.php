@@ -303,6 +303,9 @@ class AuthController extends Controller
                 'email' => ['sometimes', 'required', 'string', 'email', 'max:255'],
                 'phone' => ['sometimes', 'nullable', 'string', 'max:32'],
                 'company' => ['sometimes', 'nullable', 'string', 'max:255'],
+                'industry' => ['sometimes', 'nullable', 'string', 'max:100'],
+                'company_size' => ['sometimes', 'nullable', 'string', 'max:100'],
+                'website' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'location' => ['sometimes', 'nullable', 'string', 'max:255'],
                 'notification_preferences' => ['sometimes', 'nullable', 'array'],
             ]);
@@ -331,6 +334,9 @@ class AuthController extends Controller
                 'email',
                 'phone',
                 'company',
+                'industry',
+                'company_size',
+                'website',
                 'location',
                 'notification_preferences',
             ];
@@ -515,6 +521,32 @@ class AuthController extends Controller
         ]);
     }
 
+    public function logout(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => ['required', 'integer', 'exists:users,id'],
+            ]);
+
+            $user = User::query()->find($validated['user_id']);
+
+            if ($user) {
+                $this->recordAuthEvent($user, $request, 'logout', $user->last_login_provider ?? 'unknown');
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Signed out successfully.',
+            ], 200);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid logout data.',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
     private function serializeUser(User $user): array
     {
         return [
@@ -525,10 +557,14 @@ class AuthController extends Controller
             'avatar_url' => $user->avatar_url,
             'phone' => $user->phone,
             'company' => $user->company,
+            'industry' => $user->industry,
+            'company_size' => $user->company_size,
+            'website' => $user->website,
             'location' => $user->location,
             'notification_preferences' => $user->notification_preferences,
             'last_login_at' => $user->last_login_at?->toISOString(),
             'last_login_provider' => $user->last_login_provider,
+            'created_at' => $user->created_at?->toISOString(),
         ];
     }
 }

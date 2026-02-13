@@ -2,12 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\RunAuditScanJob;
+use App\Models\AuditRun;
+use App\Models\User;
+use App\Services\GooglePlacesService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
-use App\Services\BusinessVerificationService;
-use App\Services\ReputationScanService;
-use App\Services\GooglePlacesService;
 
 /**
  * @OA\Info(
@@ -36,17 +37,10 @@ use App\Services\GooglePlacesService;
  */
 class ReputationController extends Controller
 {
-    private BusinessVerificationService $verificationService;
-    private ReputationScanService $scanService;
     private GooglePlacesService $placesService;
 
-    public function __construct(
-        BusinessVerificationService $verificationService,
-        ReputationScanService $scanService,
-        GooglePlacesService $placesService
-    ) {
-        $this->verificationService = $verificationService;
-        $this->scanService = $scanService;
+    public function __construct(GooglePlacesService $placesService)
+    {
         $this->placesService = $placesService;
     }
 
@@ -225,6 +219,8 @@ class ReputationController extends Controller
         try {
             // Validate incoming request
             $validated = $this->validateScanRequest($request);
+            $auditUser = $this->resolveAuditUser($validated);
+            $existingAudit = $this->resolveExistingAuditRun($validated, $auditUser);
 
             $placeId = $validated['place_id'] ?? null;
             $skipPlaces = (bool) ($validated['skip_places'] ?? false);
@@ -238,22 +234,53 @@ class ReputationController extends Controller
                 );
 
                 if (!$candidatesResult['success']) {
+                    $auditRun = $this->createAuditRun(
+                        $request,
+                        $validated,
+                        $auditUser,
+                        'error',
+                        null,
+                        'PLACES_SEARCH_FAILED',
+                        'Google Business Profile lookup failed',
+                        $existingAudit
+                    );
+
                     return $this->errorResponse(
                         'PLACES_SEARCH_FAILED',
-                        'Google Places search failed',
+                        'Google Business Profile lookup failed',
                         $candidatesResult['reason'] ?? null,
-                        503
+                        503,
+                        $auditRun?->id
                     );
                 }
 
                 $candidates = $candidatesResult['candidates'] ?? [];
 
                 if (!empty($candidates)) {
-                    return response()->json([
+                    $selectionResponse = [
                         'status' => 'selection_required',
-                        'message' => 'Select a business or set skip_places=true to continue without Google Places.',
+                        'message' => 'Select your business, or click Continue without Google Business Profile if your business is not listed.',
                         'candidates' => $candidates,
-                        'total' => count($candidates)
+                        'total' => count($candidates),
+                    ];
+
+                    $auditRun = $this->createAuditRun(
+                        $request,
+                        $validated,
+                        $auditUser,
+                        'selection_required',
+                        $selectionResponse,
+                        null,
+                        null,
+                        $existingAudit
+                    );
+
+                    if ($auditRun) {
+                        $selectionResponse['audit_id'] = $auditRun->id;
+                    }
+
+                    return response()->json([
+                        ...$selectionResponse,
                     ], 200);
                 }
 
@@ -261,40 +288,35 @@ class ReputationController extends Controller
                 $validated['skip_places'] = true;
             }
 
-            // Step 1: Verify business (website OR phone+location)
-            $verification = $this->verificationService->verify($validated);
+            // Queue async audit execution and return immediately.
+            $auditRun = $this->createAuditRun(
+                $request,
+                $validated,
+                $auditUser,
+                'pending',
+                null,
+                null,
+                null,
+                $existingAudit
+            );
 
-            if (!$verification['success']) {
+            if (!$auditRun) {
                 return $this->errorResponse(
-                    $verification['error_code'],
-                    $verification['message'],
-                    $verification['details'] ?? null,
-                    $verification['http_code'] ?? 422
-                );
-            }
-
-            // Step 2 & 3: Scan web and analyze reputation
-            $scanResult = $this->scanService->scan($verification['business_data']);
-
-            if (!$scanResult['success']) {
-                return $this->errorResponse(
-                    $scanResult['error_code'],
-                    $scanResult['message'],
+                    'AUDIT_CREATE_FAILED',
+                    'Unable to start your audit right now. Please try again.',
                     null,
-                    $scanResult['http_code'] ?? 500
+                    500
                 );
             }
 
-            // Return success response
+            RunAuditScanJob::dispatch($auditRun->id);
+
             return response()->json([
-                'status' => 'success',
-                'business_name' => $scanResult['business_name'],
-                'verified_website' => $scanResult['verified_website'] ?? null,
-                'verified_location' => $scanResult['verified_location'] ?? null,
-                'verified_phone' => $scanResult['verified_phone'] ?? null,
-                'scan_date' => $scanResult['scan_date'],
-                'results' => $scanResult['results']
-            ], 200);
+                'status' => 'queued',
+                'message' => 'Your audit has started successfully. We will email you as soon as the analysis is complete.',
+                'audit' => $this->serializeAuditRunSummary($auditRun),
+                'audit_id' => $auditRun->id,
+            ], 202);
 
         } catch (ValidationException $e) {
             return $this->errorResponse(
@@ -319,6 +341,84 @@ class ReputationController extends Controller
     }
 
     /**
+     * Fetch audit history for a user.
+     */
+    public function history(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'nullable|integer|exists:users,id',
+                'lookup_email' => 'nullable|string|email',
+                'limit' => 'nullable|integer|min:1|max:200',
+            ]);
+
+            $user = $this->resolveAuditUser($validated);
+            if (!$user) {
+                return $this->errorResponse('USER_NOT_FOUND', 'User not found.', null, 404);
+            }
+
+            $limit = (int) ($validated['limit'] ?? 50);
+            $audits = AuditRun::query()
+                ->where('user_id', $user->id)
+                ->orderByDesc('created_at')
+                ->limit($limit)
+                ->get();
+
+            return response()->json([
+                'status' => 'success',
+                'total' => $audits->count(),
+                'audits' => $audits->map(fn (AuditRun $audit) => $this->serializeAuditRunSummary($audit))->values(),
+            ]);
+        } catch (ValidationException $e) {
+            return $this->errorResponse(
+                'VALIDATION_ERROR',
+                'Invalid history request parameters.',
+                $e->errors(),
+                422
+            );
+        }
+    }
+
+    /**
+     * Fetch one audit history record for a user.
+     */
+    public function historyItem(Request $request, int $audit): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'nullable|integer|exists:users,id',
+                'lookup_email' => 'nullable|string|email',
+            ]);
+
+            $user = $this->resolveAuditUser($validated);
+            if (!$user) {
+                return $this->errorResponse('USER_NOT_FOUND', 'User not found.', null, 404);
+            }
+
+            $auditRun = AuditRun::query()
+                ->where('id', $audit)
+                ->where('user_id', $user->id)
+                ->first();
+
+            if (!$auditRun) {
+                return $this->errorResponse('AUDIT_NOT_FOUND', 'Audit record not found.', null, 404);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'audit' => $this->serializeAuditRunDetail($auditRun),
+            ]);
+        } catch (ValidationException $e) {
+            return $this->errorResponse(
+                'VALIDATION_ERROR',
+                'Invalid history-item request parameters.',
+                $e->errors(),
+                422
+            );
+        }
+    }
+
+    /**
      * Validate scan request
      * 
      * @param Request $request
@@ -335,6 +435,9 @@ class ReputationController extends Controller
 
         // Validation rules
         $rules = [
+            'user_id' => 'nullable|integer|exists:users,id',
+            'lookup_email' => 'nullable|string|email',
+            'audit_id' => 'nullable|integer|exists:audit_runs,id',
             'business_name' => 'nullable|string|min:2|max:100',
             'website' => 'nullable|url',
             'phone' => 'nullable|string|regex:/^\+?[0-9\s\-\(\)]+$/',
@@ -342,7 +445,11 @@ class ReputationController extends Controller
             'country' => 'nullable|string|size:2',
             'industry' => 'nullable|string|max:50',
             'place_id' => 'nullable|string|max:200',
-            'skip_places' => 'nullable|boolean'
+            'skip_places' => 'nullable|boolean',
+            'selected_place_name' => 'nullable|string|max:255',
+            'selected_place_address' => 'nullable|string|max:500',
+            'selected_place_rating' => 'nullable|numeric|min:0|max:5',
+            'selected_place_review_count' => 'nullable|integer|min:0',
         ];
 
         $validated = $request->validate($rules);
@@ -359,6 +466,147 @@ class ReputationController extends Controller
         return $validated;
     }
 
+    private function resolveAuditUser(array $validated): ?User
+    {
+        $userId = $validated['user_id'] ?? null;
+        if ($userId) {
+            return User::query()->find($userId);
+        }
+
+        $lookupEmail = $validated['lookup_email'] ?? null;
+        if ($lookupEmail) {
+            return User::query()->where('email', $lookupEmail)->first();
+        }
+
+        return null;
+    }
+
+    private function resolveExistingAuditRun(array $validated, ?User $user): ?AuditRun
+    {
+        $auditId = $validated['audit_id'] ?? null;
+        if (!$auditId) {
+            return null;
+        }
+
+        if (!$user) {
+            throw ValidationException::withMessages([
+                'audit_id' => 'Unable to resume this audit. Sign in and try again.',
+            ]);
+        }
+
+        $auditRun = AuditRun::query()
+            ->where('id', $auditId)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (!$auditRun) {
+            throw ValidationException::withMessages([
+                'audit_id' => 'Audit record not found for this user.',
+            ]);
+        }
+
+        if ($auditRun->status !== 'selection_required') {
+            throw ValidationException::withMessages([
+                'audit_id' => 'Only audits that need selection can be resumed.',
+            ]);
+        }
+
+        return $auditRun;
+    }
+
+    private function createAuditRun(
+        Request $request,
+        array $validated,
+        ?User $user,
+        string $status,
+        ?array $responsePayload = null,
+        ?string $errorCode = null,
+        ?string $errorMessage = null,
+        ?AuditRun $existingAudit = null
+    ): ?AuditRun {
+        try {
+            $scanDate = null;
+            $reputationScore = null;
+
+            if ($responsePayload && isset($responsePayload['scan_date'])) {
+                try {
+                    $scanDate = (string) $responsePayload['scan_date'];
+                } catch (\Throwable $e) {
+                    $scanDate = null;
+                }
+            }
+
+            if ($responsePayload && isset($responsePayload['results']['reputation_score'])) {
+                $reputationScore = (int) $responsePayload['results']['reputation_score'];
+            }
+
+            $attributes = [
+                'user_id' => $existingAudit?->user_id ?? $user?->id,
+                'status' => $status,
+                'business_name' => $responsePayload['business_name']
+                    ?? ($validated['business_name'] ?? null),
+                'website' => $responsePayload['verified_website']
+                    ?? ($validated['website'] ?? null),
+                'phone' => $responsePayload['verified_phone']
+                    ?? ($validated['phone'] ?? null),
+                'location' => $responsePayload['verified_location']
+                    ?? ($validated['location'] ?? null),
+                'industry' => $validated['industry'] ?? null,
+                'place_id' => $validated['place_id'] ?? null,
+                'skip_places' => (bool) ($validated['skip_places'] ?? false),
+                'reputation_score' => $reputationScore,
+                'scan_date' => $scanDate,
+                'error_code' => $errorCode,
+                'error_message' => $errorMessage,
+                'ip_address' => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'request_payload' => $validated,
+                'response_payload' => $responsePayload,
+            ];
+
+            if ($existingAudit) {
+                $existingAudit->fill($attributes);
+                $existingAudit->save();
+                return $existingAudit;
+            }
+
+            return AuditRun::query()->create($attributes);
+        } catch (\Throwable $e) {
+            \Log::warning('Failed to persist audit run.', [
+                'exception' => $e,
+            ]);
+
+            return null;
+        }
+    }
+
+    private function serializeAuditRunSummary(AuditRun $audit): array
+    {
+        return [
+            'id' => $audit->id,
+            'status' => $audit->status,
+            'business_name' => $audit->business_name,
+            'website' => $audit->website,
+            'location' => $audit->location,
+            'industry' => $audit->industry,
+            'reputation_score' => $audit->reputation_score,
+            'scan_date' => $audit->scan_date?->toISOString(),
+            'created_at' => $audit->created_at?->toISOString(),
+            'error_code' => $audit->error_code,
+            'error_message' => $audit->error_message,
+        ];
+    }
+
+    private function serializeAuditRunDetail(AuditRun $audit): array
+    {
+        return [
+            ...$this->serializeAuditRunSummary($audit),
+            'request_payload' => $audit->request_payload,
+            'response_payload' => $audit->response_payload,
+            'scan_response' => $audit->status === 'success' ? $audit->response_payload : null,
+        ];
+    }
+
     /**
      * Return error response
      * 
@@ -372,7 +620,8 @@ class ReputationController extends Controller
         string $code,
         string $message,
         $details = null,
-        int $httpCode = 422
+        int $httpCode = 422,
+        ?int $auditId = null
     ): JsonResponse {
         $response = [
             'status' => 'error',
@@ -382,6 +631,10 @@ class ReputationController extends Controller
 
         if ($details !== null) {
             $response['details'] = $details;
+        }
+
+        if ($auditId !== null) {
+            $response['audit_id'] = $auditId;
         }
 
         return response()->json($response, $httpCode);
