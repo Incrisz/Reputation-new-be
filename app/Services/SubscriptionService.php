@@ -2,10 +2,13 @@
 
 namespace App\Services;
 
+use App\Models\PaymentTransaction;
 use App\Models\Plan;
 use App\Models\User;
+use App\Models\UserPlanEntitlement;
 use App\Models\UserSubscription;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 class SubscriptionService
 {
@@ -118,9 +121,14 @@ class SubscriptionService
         $billingInterval = $billingInterval === 'annual' ? 'annual' : 'monthly';
 
         $now = now();
-        $renewsAt = $billingInterval === 'annual'
-            ? $now->copy()->addYear()
-            : $now->copy()->addMonth();
+        $startsAt = isset($billingMeta['started_at'])
+            ? Carbon::parse($billingMeta['started_at'])
+            : $now->copy();
+        $renewsAt = isset($billingMeta['renews_at'])
+            ? Carbon::parse($billingMeta['renews_at'])
+            : ($billingInterval === 'annual'
+                ? $startsAt->copy()->addYear()
+                : $startsAt->copy()->addMonth());
 
         $subscription = UserSubscription::query()
             ->where('user_id', $user->id)
@@ -142,7 +150,7 @@ class SubscriptionService
         $subscription->forceFill([
             'plan_id' => $plan->id,
             'status' => 'active',
-            'started_at' => $now,
+            'started_at' => $startsAt,
             'renews_at' => $renewsAt,
             'payment_method' => $paymentMethod,
             'billing_interval' => $billingInterval,
@@ -155,6 +163,179 @@ class SubscriptionService
         ])->save();
 
         return $subscription->fresh(['plan.features']) ?? $subscription;
+    }
+
+    public function getReusableEntitlement(User $user, Plan $plan): ?UserPlanEntitlement
+    {
+        $this->markExpiredEntitlements($user);
+
+        return UserPlanEntitlement::query()
+            ->where('user_id', $user->id)
+            ->where('plan_id', $plan->id)
+            ->where('status', 'active')
+            ->where('expires_at', '>', now())
+            ->orderByDesc('expires_at')
+            ->first();
+    }
+
+    public function markExpiredEntitlements(User $user): void
+    {
+        UserPlanEntitlement::query()
+            ->where('user_id', $user->id)
+            ->where('status', 'active')
+            ->where('expires_at', '<=', now())
+            ->update(['status' => 'expired']);
+    }
+
+    public function createOrRefreshEntitlement(
+        User $user,
+        Plan $plan,
+        string $billingInterval,
+        array $meta = []
+    ): UserPlanEntitlement {
+        $billingInterval = $billingInterval === 'annual' ? 'annual' : 'monthly';
+        $startsAt = isset($meta['starts_at'])
+            ? Carbon::parse($meta['starts_at'])
+            : now();
+        $expiresAt = isset($meta['expires_at'])
+            ? Carbon::parse($meta['expires_at'])
+            : ($billingInterval === 'annual'
+                ? $startsAt->copy()->addYear()
+                : $startsAt->copy()->addMonth());
+
+        $stripeSubscriptionId = isset($meta['stripe_subscription_id']) && is_string($meta['stripe_subscription_id'])
+            ? $meta['stripe_subscription_id']
+            : null;
+        $stripeCheckoutSessionId = isset($meta['stripe_checkout_session_id']) && is_string($meta['stripe_checkout_session_id'])
+            ? $meta['stripe_checkout_session_id']
+            : null;
+
+        $existing = null;
+        if ($stripeSubscriptionId) {
+            $existing = UserPlanEntitlement::query()
+                ->where('user_id', $user->id)
+                ->where('plan_id', $plan->id)
+                ->where('stripe_subscription_id', $stripeSubscriptionId)
+                ->first();
+        }
+
+        if (!$existing && $stripeCheckoutSessionId) {
+            $existing = UserPlanEntitlement::query()
+                ->where('user_id', $user->id)
+                ->where('plan_id', $plan->id)
+                ->where('stripe_checkout_session_id', $stripeCheckoutSessionId)
+                ->first();
+        }
+
+        $payload = [
+            'user_id' => $user->id,
+            'plan_id' => $plan->id,
+            'status' => $expiresAt->greaterThan(now()) ? 'active' : 'expired',
+            'billing_interval' => $billingInterval,
+            'source' => (string) ($meta['source'] ?? 'stripe'),
+            'starts_at' => $startsAt,
+            'expires_at' => $expiresAt,
+            'stripe_customer_id' => $meta['stripe_customer_id'] ?? null,
+            'stripe_subscription_id' => $stripeSubscriptionId,
+            'stripe_checkout_session_id' => $stripeCheckoutSessionId,
+            'metadata' => is_array($meta['metadata'] ?? null) ? $meta['metadata'] : null,
+        ];
+
+        if ($existing) {
+            $existing->forceFill($payload)->save();
+            return $existing->fresh() ?? $existing;
+        }
+
+        return UserPlanEntitlement::query()->create($payload);
+    }
+
+    public function recordPaymentTransaction(
+        User $user,
+        Plan $plan,
+        ?UserSubscription $subscription,
+        array $payload = []
+    ): PaymentTransaction {
+        $provider = (string) ($payload['provider'] ?? 'stripe');
+        $providerSessionId = isset($payload['provider_session_id']) && is_string($payload['provider_session_id'])
+            ? $payload['provider_session_id']
+            : null;
+
+        if ($providerSessionId) {
+            $existing = PaymentTransaction::query()
+                ->where('provider', $provider)
+                ->where('provider_session_id', $providerSessionId)
+                ->first();
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        return PaymentTransaction::query()->create([
+            'user_id' => $user->id,
+            'plan_id' => $plan->id,
+            'user_subscription_id' => $subscription?->id,
+            'provider' => $provider,
+            'transaction_type' => (string) ($payload['transaction_type'] ?? 'charge'),
+            'provider_transaction_id' => isset($payload['provider_transaction_id']) && is_string($payload['provider_transaction_id'])
+                ? $payload['provider_transaction_id']
+                : null,
+            'provider_session_id' => $providerSessionId,
+            'provider_subscription_id' => isset($payload['provider_subscription_id']) && is_string($payload['provider_subscription_id'])
+                ? $payload['provider_subscription_id']
+                : null,
+            'provider_customer_id' => isset($payload['provider_customer_id']) && is_string($payload['provider_customer_id'])
+                ? $payload['provider_customer_id']
+                : null,
+            'billing_interval' => ($payload['billing_interval'] ?? null) === 'annual' ? 'annual' : 'monthly',
+            'amount' => (float) ($payload['amount'] ?? 0),
+            'currency' => strtoupper((string) ($payload['currency'] ?? 'USD')),
+            'status' => (string) ($payload['status'] ?? 'paid'),
+            'paid_at' => isset($payload['paid_at']) ? Carbon::parse($payload['paid_at']) : now(),
+            'metadata' => is_array($payload['metadata'] ?? null) ? $payload['metadata'] : null,
+        ]);
+    }
+
+    public function getPaymentHistory(User $user, int $limit = 20): Collection
+    {
+        $limit = max(1, min($limit, 200));
+
+        return PaymentTransaction::query()
+            ->where('user_id', $user->id)
+            ->with('plan')
+            ->orderByDesc('paid_at')
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get();
+    }
+
+    public function serializePaymentTransaction(PaymentTransaction $transaction): array
+    {
+        $metadata = is_array($transaction->metadata) ? $transaction->metadata : [];
+        $entitlementStartsAt = isset($metadata['entitlement_starts_at']) && is_string($metadata['entitlement_starts_at'])
+            ? $metadata['entitlement_starts_at']
+            : null;
+        $entitlementExpiresAt = isset($metadata['entitlement_expires_at']) && is_string($metadata['entitlement_expires_at'])
+            ? $metadata['entitlement_expires_at']
+            : null;
+
+        return [
+            'id' => $transaction->id,
+            'provider' => $transaction->provider,
+            'transaction_type' => $transaction->transaction_type,
+            'status' => $transaction->status,
+            'amount' => (float) $transaction->amount,
+            'currency' => $transaction->currency,
+            'billing_interval' => $transaction->billing_interval,
+            'paid_at' => $transaction->paid_at?->toISOString(),
+            'created_at' => $transaction->created_at?->toISOString(),
+            'provider_transaction_id' => $transaction->provider_transaction_id,
+            'provider_session_id' => $transaction->provider_session_id,
+            'entitlement_starts_at' => $entitlementStartsAt,
+            'entitlement_expires_at' => $entitlementExpiresAt,
+            'plan' => $transaction->plan
+                ? $this->planService->serializePlan($transaction->plan)
+                : null,
+        ];
     }
 
     public function syncStripeSubscriptionStatus(array $stripeSubscription): ?UserSubscription

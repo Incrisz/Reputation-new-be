@@ -90,6 +90,10 @@ Route::middleware('api')->group(function () {
         ->middleware('throttle:30,1')
         ->name('user.subscription');
 
+    Route::get('/user/payment-history', [UserPlanController::class, 'paymentHistory'])
+        ->middleware('throttle:30,1')
+        ->name('user.payment-history');
+
     // Billing / Stripe Endpoints
     Route::post('/billing/checkout-session', [BillingController::class, 'createCheckoutSession'])
         ->middleware('throttle:20,1')

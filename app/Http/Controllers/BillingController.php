@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\UserSubscription;
 use App\Services\StripeBillingService;
 use App\Services\SubscriptionService;
+use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -58,7 +59,70 @@ class BillingController extends Controller
             ? (float) $plan->price_yearly
             : (float) $plan->price_monthly;
 
+        if ($planPrice > 0) {
+            $existingEntitlement = $this->subscriptionService->getReusableEntitlement($user, $plan);
+            if ($existingEntitlement) {
+                $subscription = $this->subscriptionService->activatePlan(
+                    $user,
+                    $plan,
+                    'entitlement_reuse',
+                    (string) $existingEntitlement->billing_interval,
+                    [
+                        'started_at' => now(),
+                        'renews_at' => $existingEntitlement->expires_at,
+                        'stripe_customer_id' => $existingEntitlement->stripe_customer_id,
+                        'stripe_subscription_id' => $existingEntitlement->stripe_subscription_id,
+                        'stripe_checkout_session_id' => $existingEntitlement->stripe_checkout_session_id,
+                    ]
+                );
+
+                return response()->json([
+                    'status' => 'success',
+                    'mode' => 'entitlement_reuse',
+                    'message' => 'Switched back to your paid plan using remaining prepaid time.',
+                    'subscription' => $this->subscriptionService->serializeSubscription($subscription),
+                    'entitlement_expires_at' => $existingEntitlement->expires_at?->toISOString(),
+                ]);
+            }
+        }
+
         if ($planPrice <= 0) {
+            $activeSubscription = UserSubscription::query()
+                ->where('user_id', $user->id)
+                ->where('status', 'active')
+                ->with('plan')
+                ->orderByDesc('renews_at')
+                ->orderByDesc('started_at')
+                ->first();
+
+            if (
+                $activeSubscription &&
+                $activeSubscription->plan &&
+                (float) $activeSubscription->plan->price_monthly > 0 &&
+                $activeSubscription->renews_at &&
+                Carbon::parse($activeSubscription->renews_at)->greaterThan(now())
+            ) {
+                $activeInterval = (string) ($activeSubscription->billing_interval ?? 'monthly');
+                $activeInterval = $activeInterval === 'annual' ? 'annual' : 'monthly';
+
+                $this->subscriptionService->createOrRefreshEntitlement(
+                    $user,
+                    $activeSubscription->plan,
+                    $activeInterval,
+                    [
+                        'source' => 'plan_switch_snapshot',
+                        'starts_at' => $activeSubscription->started_at ?? now(),
+                        'expires_at' => $activeSubscription->renews_at,
+                        'stripe_customer_id' => $activeSubscription->stripe_customer_id,
+                        'stripe_subscription_id' => $activeSubscription->stripe_subscription_id,
+                        'stripe_checkout_session_id' => $activeSubscription->stripe_checkout_session_id,
+                        'metadata' => [
+                            'reason' => 'switched_to_free',
+                        ],
+                    ]
+                );
+            }
+
             $subscription = $this->subscriptionService->activatePlan(
                 $user,
                 $plan,
@@ -224,7 +288,12 @@ class BillingController extends Controller
         $billingPeriod = (string) ($metadata['billing_period'] ?? 'monthly');
         $billingPeriod = $billingPeriod === 'annual' ? 'annual' : 'monthly';
 
-        return $this->subscriptionService->activatePlan(
+        $subscriptionObject = $this->resolveStripeSubscriptionObject($sessionObject);
+        $periodStart = $this->resolveStripePeriodStart($subscriptionObject) ?? now();
+        $periodEnd = $this->resolveStripePeriodEnd($subscriptionObject, $billingPeriod)
+            ?? ($billingPeriod === 'annual' ? now()->copy()->addYear() : now()->copy()->addMonth());
+
+        $subscription = $this->subscriptionService->activatePlan(
             $user,
             $plan,
             'stripe',
@@ -240,8 +309,70 @@ class BillingController extends Controller
                     ? $sessionObject['id']
                     : null,
                 'last_payment_at' => now(),
+                'started_at' => $periodStart,
+                'renews_at' => $periodEnd,
             ]
         );
+
+        $this->subscriptionService->createOrRefreshEntitlement(
+            $user,
+            $plan,
+            $billingPeriod,
+            [
+                'source' => 'stripe',
+                'starts_at' => $periodStart,
+                'expires_at' => $periodEnd,
+                'stripe_customer_id' => is_string($sessionObject['customer'] ?? null)
+                    ? $sessionObject['customer']
+                    : null,
+                'stripe_subscription_id' => is_string($sessionObject['subscription'] ?? null)
+                    ? $sessionObject['subscription']
+                    : null,
+                'stripe_checkout_session_id' => is_string($sessionObject['id'] ?? null)
+                    ? $sessionObject['id']
+                    : null,
+                'metadata' => [
+                    'payment_status' => $sessionObject['payment_status'] ?? null,
+                    'session_status' => $sessionObject['status'] ?? null,
+                ],
+            ]
+        );
+
+        $this->subscriptionService->recordPaymentTransaction(
+            $user,
+            $plan,
+            $subscription,
+            [
+                'provider' => 'stripe',
+                'transaction_type' => 'charge',
+                'provider_transaction_id' => is_string($sessionObject['payment_intent'] ?? null)
+                    ? $sessionObject['payment_intent']
+                    : null,
+                'provider_session_id' => is_string($sessionObject['id'] ?? null)
+                    ? $sessionObject['id']
+                    : null,
+                'provider_subscription_id' => is_string($sessionObject['subscription'] ?? null)
+                    ? $sessionObject['subscription']
+                    : null,
+                'provider_customer_id' => is_string($sessionObject['customer'] ?? null)
+                    ? $sessionObject['customer']
+                    : null,
+                'billing_interval' => $billingPeriod,
+                'amount' => ((int) ($sessionObject['amount_total'] ?? 0)) / 100,
+                'currency' => strtoupper((string) ($sessionObject['currency'] ?? 'USD')),
+                'status' => 'paid',
+                'paid_at' => now(),
+                'metadata' => [
+                    'session_id' => $sessionObject['id'] ?? null,
+                    'mode' => $sessionObject['mode'] ?? null,
+                    'livemode' => $sessionObject['livemode'] ?? null,
+                    'entitlement_starts_at' => $periodStart->toISOString(),
+                    'entitlement_expires_at' => $periodEnd->toISOString(),
+                ],
+            ]
+        );
+
+        return $subscription;
     }
 
     /**
@@ -277,5 +408,67 @@ class BillingController extends Controller
         }
 
         return Plan::query()->where('is_active', true)->find((int) $planId);
+    }
+
+    /**
+     * @param array<string, mixed> $sessionObject
+     * @return array<string, mixed>|null
+     */
+    private function resolveStripeSubscriptionObject(array $sessionObject): ?array
+    {
+        $subscription = $sessionObject['subscription'] ?? null;
+        if (is_array($subscription)) {
+            return $subscription;
+        }
+
+        if (!is_string($subscription) || trim($subscription) === '') {
+            return null;
+        }
+
+        $response = $this->stripeBillingService->retrieveSubscription($subscription);
+        if (!($response['success'] ?? false)) {
+            Log::warning('Failed to retrieve Stripe subscription while finalizing checkout.', [
+                'subscription_id' => $subscription,
+                'message' => $response['message'] ?? null,
+            ]);
+            return null;
+        }
+
+        $subscriptionObject = $response['subscription'] ?? null;
+        return is_array($subscriptionObject) ? $subscriptionObject : null;
+    }
+
+    /**
+     * @param array<string, mixed>|null $subscriptionObject
+     */
+    private function resolveStripePeriodStart(?array $subscriptionObject): ?Carbon
+    {
+        if (!is_array($subscriptionObject)) {
+            return null;
+        }
+
+        $start = data_get($subscriptionObject, 'current_period_start');
+        if (!is_numeric($start)) {
+            return null;
+        }
+
+        return Carbon::createFromTimestamp((int) $start);
+    }
+
+    /**
+     * @param array<string, mixed>|null $subscriptionObject
+     */
+    private function resolveStripePeriodEnd(?array $subscriptionObject, string $billingPeriod): ?Carbon
+    {
+        if (is_array($subscriptionObject)) {
+            $end = data_get($subscriptionObject, 'current_period_end');
+            if (is_numeric($end)) {
+                return Carbon::createFromTimestamp((int) $end);
+            }
+        }
+
+        return $billingPeriod === 'annual'
+            ? now()->copy()->addYear()
+            : now()->copy()->addMonth();
     }
 }

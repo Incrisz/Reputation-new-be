@@ -177,6 +177,59 @@ class StripeBillingService
         ];
     }
 
+    /**
+     * @return array{success: bool, message?: string, status_code?: int, subscription?: array<string, mixed>}
+     */
+    public function retrieveSubscription(string $subscriptionId): array
+    {
+        $secretKey = $this->getSecretKey();
+        if ($secretKey === '') {
+            return [
+                'success' => false,
+                'status_code' => 503,
+                'message' => 'Stripe is not configured on the server.',
+            ];
+        }
+
+        $subscriptionId = trim($subscriptionId);
+        if ($subscriptionId === '') {
+            return [
+                'success' => false,
+                'status_code' => 422,
+                'message' => 'A Stripe subscription id is required.',
+            ];
+        }
+
+        $response = Http::withBasicAuth($secretKey, '')
+            ->acceptJson()
+            ->get(self::STRIPE_API_BASE . '/subscriptions/' . $subscriptionId);
+
+        if (!$response->successful()) {
+            return [
+                'success' => false,
+                'status_code' => $response->status(),
+                'message' => $this->extractStripeErrorMessage(
+                    $response->json(),
+                    'Unable to load Stripe subscription.'
+                ),
+            ];
+        }
+
+        $data = $response->json();
+        if (!is_array($data) || !isset($data['id'])) {
+            return [
+                'success' => false,
+                'status_code' => 502,
+                'message' => 'Stripe subscription response is invalid.',
+            ];
+        }
+
+        return [
+            'success' => true,
+            'subscription' => $data,
+        ];
+    }
+
     public function verifyWebhookSignature(string $payload, ?string $signatureHeader): bool
     {
         $webhookSecret = (string) config('services.stripe.webhook_secret');

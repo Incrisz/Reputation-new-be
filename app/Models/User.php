@@ -79,6 +79,16 @@ class User extends Authenticatable
         return $this->hasMany(UserSubscription::class);
     }
 
+    public function planEntitlements(): HasMany
+    {
+        return $this->hasMany(UserPlanEntitlement::class);
+    }
+
+    public function paymentTransactions(): HasMany
+    {
+        return $this->hasMany(PaymentTransaction::class);
+    }
+
     public function usageTracking(): HasMany
     {
         return $this->hasMany(UsageTracking::class);

@@ -50,3 +50,10 @@ Then run the queue worker:
    - `POST /api/billing/checkout-session`
    - `POST /api/billing/confirm-checkout-session`
    - Stripe webhook: `POST /api/billing/stripe/webhook`
+   - Payment history: `GET /api/user/payment-history?user_id=...`
+
+## Plan Switching Behavior
+
+- If a user switches from a paid plan to Free before expiry, remaining paid access is preserved.
+- Switching back to the same paid plan reuses remaining entitlement time instead of charging again.
+- Successful payments are stored in `payment_transactions` and shown via `GET /api/user/payment-history`.

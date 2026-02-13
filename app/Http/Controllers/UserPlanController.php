@@ -190,6 +190,44 @@ class UserPlanController extends Controller
         }
     }
 
+    public function paymentHistory(Request $request): JsonResponse
+    {
+        try {
+            $validated = $request->validate([
+                'user_id' => 'nullable|integer|exists:users,id',
+                'lookup_email' => 'nullable|string|email',
+                'limit' => 'nullable|integer|min:1|max:200',
+            ]);
+
+            $user = $this->resolveUserFromRequest($validated);
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not found.',
+                ], 404);
+            }
+
+            $history = $this->subscriptionService->getPaymentHistory(
+                $user,
+                (int) ($validated['limit'] ?? 20)
+            );
+
+            return response()->json([
+                'status' => 'success',
+                'total' => $history->count(),
+                'payments' => $history
+                    ->map(fn ($item) => $this->subscriptionService->serializePaymentTransaction($item))
+                    ->values(),
+            ]);
+        } catch (ValidationException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid payment-history request parameters.',
+                'errors' => $e->errors(),
+            ], 422);
+        }
+    }
+
     private function resolveUserFromRequest(array $validated): ?User
     {
         $userId = $validated['user_id'] ?? null;
