@@ -3,6 +3,7 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AdminPlanController;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\BillingController;
 use App\Http\Controllers\ReputationController;
 use App\Http\Controllers\UserPlanController;
 
@@ -88,6 +89,19 @@ Route::middleware('api')->group(function () {
     Route::get('/user/subscription', [UserPlanController::class, 'subscription'])
         ->middleware('throttle:30,1')
         ->name('user.subscription');
+
+    // Billing / Stripe Endpoints
+    Route::post('/billing/checkout-session', [BillingController::class, 'createCheckoutSession'])
+        ->middleware('throttle:20,1')
+        ->name('billing.checkout-session');
+
+    Route::post('/billing/confirm-checkout-session', [BillingController::class, 'confirmCheckoutSession'])
+        ->middleware('throttle:20,1')
+        ->name('billing.confirm-checkout-session');
+
+    Route::post('/billing/stripe/webhook', [BillingController::class, 'stripeWebhook'])
+        ->middleware('throttle:240,1')
+        ->name('billing.stripe.webhook');
 
     // Admin-ready plan management endpoints (guarded by X-Admin-Key)
     Route::post('/admin/plans/custom', [AdminPlanController::class, 'createCustomPlan'])

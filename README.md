@@ -33,3 +33,20 @@ MAIL_FROM_NAME="Reputation AI"
 Then run the queue worker:
 
 `php artisan queue:work --queue=default --tries=2 --timeout=300`
+
+## Stripe Billing Setup
+
+1. Add Stripe keys in backend `.env`:
+   - `STRIPE_SECRET_KEY=...`
+   - `STRIPE_PUBLISHABLE_KEY=...`
+   - `STRIPE_WEBHOOK_SECRET=whsec_...` (from Stripe Dashboard or `stripe listen`)
+   - `STRIPE_SUCCESS_URL=${APP_FRONTEND_URL}/pricing?checkout=success`
+   - `STRIPE_CANCEL_URL=${APP_FRONTEND_URL}/pricing?checkout=cancel`
+2. Run latest migrations:
+   - `php artisan migrate`
+3. Use Stripe CLI for local webhook forwarding:
+   - `stripe listen --forward-to http://localhost:8000/api/billing/stripe/webhook`
+4. The pricing page now calls:
+   - `POST /api/billing/checkout-session`
+   - `POST /api/billing/confirm-checkout-session`
+   - Stripe webhook: `POST /api/billing/stripe/webhook`

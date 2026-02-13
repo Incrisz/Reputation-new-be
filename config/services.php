@@ -75,4 +75,12 @@ return [
         'active' => env('SOCIAL_ACTIVE', false),
     ],
 
+    'stripe' => [
+        'secret_key' => env('STRIPE_SECRET_KEY'),
+        'publishable_key' => env('STRIPE_PUBLISHABLE_KEY'),
+        'webhook_secret' => env('STRIPE_WEBHOOK_SECRET'),
+        'success_url' => env('STRIPE_SUCCESS_URL', env('APP_FRONTEND_URL', 'http://localhost:3000') . '/pricing?checkout=success'),
+        'cancel_url' => env('STRIPE_CANCEL_URL', env('APP_FRONTEND_URL', 'http://localhost:3000') . '/pricing?checkout=cancel'),
+    ],
+
 ];
