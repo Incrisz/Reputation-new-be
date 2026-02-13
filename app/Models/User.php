@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -21,6 +22,13 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'registration_provider',
+        'google_id',
+        'avatar_url',
+        'last_login_at',
+        'last_login_ip',
+        'last_login_user_agent',
+        'last_login_provider',
     ];
 
     /**
@@ -43,6 +51,12 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'last_login_at' => 'datetime',
         ];
+    }
+
+    public function authEvents(): HasMany
+    {
+        return $this->hasMany(UserAuthEvent::class);
     }
 }

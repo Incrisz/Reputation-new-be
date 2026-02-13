@@ -1,7 +1,7 @@
 <?php
 
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuthController;
 use App\Http\Controllers\ReputationController;
 
 /*
@@ -16,6 +16,27 @@ use App\Http\Controllers\ReputationController;
 */
 
 Route::middleware('api')->group(function () {
+    // Authentication Endpoints
+    Route::post('/auth/register', [AuthController::class, 'register'])
+        ->middleware('throttle:10,1')
+        ->name('auth.register');
+
+    Route::post('/auth/login', [AuthController::class, 'login'])
+        ->middleware('throttle:10,1')
+        ->name('auth.login');
+
+    Route::post('/auth/google', [AuthController::class, 'google'])
+        ->middleware('throttle:10,1')
+        ->name('auth.google');
+
+    Route::post('/auth/forgot-password', [AuthController::class, 'forgotPassword'])
+        ->middleware('throttle:5,1')
+        ->name('auth.forgot-password');
+
+    Route::post('/auth/reset-password', [AuthController::class, 'resetPassword'])
+        ->middleware('throttle:10,1')
+        ->name('auth.reset-password');
+
     // Reputation Scan Endpoint
     Route::post('/reputation/scan', [ReputationController::class, 'scan'])
         ->middleware('throttle:10,1')
