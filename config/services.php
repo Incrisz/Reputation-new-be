@@ -39,6 +39,11 @@ return [
         'provider' => env('LLM_PROVIDER', 'openai'),
     ],
 
+    'search' => [
+        'provider' => env('SEARCH_PROVIDER', 'llm'),
+        'llm_fallback_to_serper' => env('SEARCH_LLM_FALLBACK_TO_SERPER', true),
+    ],
+
     'openai' => [
         'api_key' => env('OPENAI_API_KEY'),
         'model' => env('OPENAI_MODEL', 'gpt-4'),
@@ -55,6 +60,10 @@ return [
 
     'serper' => [
         'api_key' => env('SERPER_API_KEY'),
+    ],
+
+    'google_places' => [
+        'api_key' => env('GOOGLE_PLACES_API_KEY'),
     ],
 
     'social' => [

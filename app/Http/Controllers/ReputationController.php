@@ -7,6 +7,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
 use App\Services\BusinessVerificationService;
 use App\Services\ReputationScanService;
+use App\Services\GooglePlacesService;
 
 /**
  * @OA\Info(
@@ -37,13 +38,16 @@ class ReputationController extends Controller
 {
     private BusinessVerificationService $verificationService;
     private ReputationScanService $scanService;
+    private GooglePlacesService $placesService;
 
     public function __construct(
         BusinessVerificationService $verificationService,
-        ReputationScanService $scanService
+        ReputationScanService $scanService,
+        GooglePlacesService $placesService
     ) {
         $this->verificationService = $verificationService;
         $this->scanService = $scanService;
+        $this->placesService = $placesService;
     }
 
     /**
@@ -54,35 +58,52 @@ class ReputationController extends Controller
      *     operationId="scanReputation",
      *     tags={"Reputation Scan"},
      *     summary="Scan and analyze business reputation",
-     *     description="Performs comprehensive business reputation analysis including web search, sentiment analysis, scoring, and AI-generated recommendations",
+     *     description="Performs comprehensive business reputation analysis. If place_id is missing and business_name is provided, returns selection_required with candidate businesses.",
      *     @OA\RequestBody(
      *         required=true,
      *         description="Business identification data",
      *         @OA\JsonContent(
-     *             required={"website"},
      *             @OA\Property(
      *                 property="website",
      *                 type="string",
      *                 example="apple.com",
-     *                 description="Business website URL (required if phone not provided)"
+     *                 description="Optional business website URL"
      *             ),
      *             @OA\Property(
      *                 property="phone",
      *                 type="string",
      *                 example="+1-555-123-4567",
-     *                 description="Business phone number (required if website not provided)"
+     *                 description="Optional business phone number"
      *             ),
      *             @OA\Property(
      *                 property="location",
      *                 type="string",
      *                 example="San Francisco, CA",
-     *                 description="Business location (required if using phone)"
+     *                 description="Optional business location (recommended for better matching)"
+     *             ),
+     *             @OA\Property(
+     *                 property="country",
+     *                 type="string",
+     *                 example="us",
+     *                 description="Optional 2-letter country code for Places and search"
      *             ),
      *             @OA\Property(
      *                 property="business_name",
      *                 type="string",
      *                 example="Apple Inc",
-     *                 description="Optional business name for context"
+     *                 description="Business name (required if no website or phone+location)"
+     *             ),
+     *             @OA\Property(
+     *                 property="place_id",
+     *                 type="string",
+     *                 example="ChIJ2eUgeAK6j4ARbn5u_wAGqWA",
+     *                 description="Optional Google Places place_id from the selection_required response"
+     *             ),
+     *             @OA\Property(
+     *                 property="skip_places",
+     *                 type="boolean",
+     *                 example=false,
+     *                 description="Set true to skip Google Places selection when no match exists"
      *             ),
      *             @OA\Property(
      *                 property="industry",
@@ -97,6 +118,8 @@ class ReputationController extends Controller
      *         description="Successful reputation scan",
      *         @OA\JsonContent(
      *             @OA\Property(property="status", type="string", example="success"),
+     *             @OA\Property(property="candidates", type="array", @OA\Items(type="object")),
+     *             @OA\Property(property="total", type="integer", example=3),
      *             @OA\Property(property="business_name", type="string", example="Apple Inc"),
      *             @OA\Property(property="verified_website", type="string", example="apple.com"),
      *             @OA\Property(property="scan_date", type="string", format="date-time"),
@@ -107,7 +130,33 @@ class ReputationController extends Controller
      *                 @OA\Property(property="sentiment_breakdown", type="object"),
      *                 @OA\Property(property="key_themes", type="array", @OA\Items(type="string")),
      *                 @OA\Property(property="mentions", type="array", @OA\Items(type="object")),
-     *                 @OA\Property(property="recommendations", type="array", @OA\Items(type="object"))
+     *                 @OA\Property(property="recommendations", type="array", @OA\Items(type="object")),
+     *                 @OA\Property(
+     *                     property="online_profile",
+     *                     type="object",
+     *                     @OA\Property(property="found", type="boolean"),
+     *                     @OA\Property(property="visibility_score", type="number", format="float", example=78.0),
+     *                     @OA\Property(property="rating", type="number", format="float", example=4.4),
+     *                     @OA\Property(property="review_count", type="integer", example=120),
+     *                     @OA\Property(property="reviews", type="array", @OA\Items(type="object")),
+     *                     @OA\Property(property="website", type="string", example="https://example.com"),
+     *                     @OA\Property(property="maps_url", type="string"),
+     *                     @OA\Property(property="social_links", type="array", @OA\Items(type="string")),
+     *                     @OA\Property(
+     *                         property="social_profiles",
+     *                         type="array",
+     *                         @OA\Items(
+     *                             @OA\Property(property="platform", type="string", example="facebook"),
+     *                             @OA\Property(property="url", type="string", example="https://facebook.com/example"),
+     *                             @OA\Property(property="verified", type="boolean", example=true),
+     *                             @OA\Property(property="source", type="string", example="website")
+     *                         )
+     *                     ),
+     *                     @OA\Property(property="place_id", type="string"),
+     *                     @OA\Property(property="name", type="string"),
+     *                     @OA\Property(property="address", type="string"),
+     *                     @OA\Property(property="source", type="string", example="google_places")
+     *                 )
      *             )
      *         )
      *     ),
@@ -176,6 +225,41 @@ class ReputationController extends Controller
         try {
             // Validate incoming request
             $validated = $this->validateScanRequest($request);
+
+            $placeId = $validated['place_id'] ?? null;
+            $skipPlaces = (bool) ($validated['skip_places'] ?? false);
+
+            if (!$skipPlaces && empty($placeId) && !empty($validated['business_name'])) {
+                $candidatesResult = $this->placesService->searchCandidates(
+                    $validated['business_name'],
+                    $validated['location'] ?? null,
+                    $validated['phone'] ?? null,
+                    $validated['website'] ?? null
+                );
+
+                if (!$candidatesResult['success']) {
+                    return $this->errorResponse(
+                        'PLACES_SEARCH_FAILED',
+                        'Google Places search failed',
+                        $candidatesResult['reason'] ?? null,
+                        503
+                    );
+                }
+
+                $candidates = $candidatesResult['candidates'] ?? [];
+
+                if (!empty($candidates)) {
+                    return response()->json([
+                        'status' => 'selection_required',
+                        'message' => 'Select a business or set skip_places=true to continue without Google Places.',
+                        'candidates' => $candidates,
+                        'total' => count($candidates)
+                    ], 200);
+                }
+
+                // No candidates found: continue scan without forcing a second request.
+                $validated['skip_places'] = true;
+            }
 
             // Step 1: Verify business (website OR phone+location)
             $verification = $this->verificationService->verify($validated);
@@ -255,17 +339,20 @@ class ReputationController extends Controller
             'website' => 'nullable|url',
             'phone' => 'nullable|string|regex:/^\+?[0-9\s\-\(\)]+$/',
             'location' => 'nullable|string|min:3|max:100',
-            'industry' => 'nullable|string|max:50'
+            'country' => 'nullable|string|size:2',
+            'industry' => 'nullable|string|max:50',
+            'place_id' => 'nullable|string|max:200',
+            'skip_places' => 'nullable|boolean'
         ];
 
         $validated = $request->validate($rules);
 
         // Business identification validation
-        $validIdentification = $hasWebsite || ($hasPhone && $hasLocation);
+        $validIdentification = $hasWebsite || ($hasPhone && $hasLocation) || $hasBusinessName;
 
         if (!$validIdentification) {
             throw ValidationException::withMessages([
-                'business_identification' => 'Provide website OR (phone + location). Business name alone is too ambiguous.'
+                'business_identification' => 'Provide business name OR website OR (phone + location).'
             ]);
         }
 

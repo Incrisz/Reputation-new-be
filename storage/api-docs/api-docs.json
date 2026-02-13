@@ -25,7 +25,7 @@
                     "Reputation Scan"
                 ],
                 "summary": "Scan and analyze business reputation",
-                "description": "Performs comprehensive business reputation analysis including web search, sentiment analysis, scoring, and AI-generated recommendations",
+                "description": "Performs comprehensive business reputation analysis. If place_id is missing and business_name is provided, returns selection_required with candidate businesses.",
                 "operationId": "scanReputation",
                 "requestBody": {
                     "description": "Business identification data",
@@ -33,29 +33,41 @@
                     "content": {
                         "application/json": {
                             "schema": {
-                                "required": [
-                                    "website"
-                                ],
                                 "properties": {
                                     "website": {
-                                        "description": "Business website URL (required if phone not provided)",
+                                        "description": "Optional business website URL",
                                         "type": "string",
                                         "example": "apple.com"
                                     },
                                     "phone": {
-                                        "description": "Business phone number (required if website not provided)",
+                                        "description": "Optional business phone number",
                                         "type": "string",
                                         "example": "+1-555-123-4567"
                                     },
                                     "location": {
-                                        "description": "Business location (required if using phone)",
+                                        "description": "Optional business location (recommended for better matching)",
                                         "type": "string",
                                         "example": "San Francisco, CA"
                                     },
+                                    "country": {
+                                        "description": "Optional 2-letter country code for Places and search",
+                                        "type": "string",
+                                        "example": "us"
+                                    },
                                     "business_name": {
-                                        "description": "Optional business name for context",
+                                        "description": "Business name (required if no website or phone+location)",
                                         "type": "string",
                                         "example": "Apple Inc"
+                                    },
+                                    "place_id": {
+                                        "description": "Optional Google Places place_id from the selection_required response",
+                                        "type": "string",
+                                        "example": "ChIJ2eUgeAK6j4ARbn5u_wAGqWA"
+                                    },
+                                    "skip_places": {
+                                        "description": "Set true to skip Google Places selection when no match exists",
+                                        "type": "boolean",
+                                        "example": false
                                     },
                                     "industry": {
                                         "description": "Optional industry classification",
@@ -78,6 +90,16 @@
                                         "status": {
                                             "type": "string",
                                             "example": "success"
+                                        },
+                                        "candidates": {
+                                            "type": "array",
+                                            "items": {
+                                                "type": "object"
+                                            }
+                                        },
+                                        "total": {
+                                            "type": "integer",
+                                            "example": 3
                                         },
                                         "business_name": {
                                             "type": "string",
@@ -118,6 +140,84 @@
                                                     "items": {
                                                         "type": "object"
                                                     }
+                                                },
+                                                "online_profile": {
+                                                    "properties": {
+                                                        "found": {
+                                                            "type": "boolean"
+                                                        },
+                                                        "visibility_score": {
+                                                            "type": "number",
+                                                            "format": "float",
+                                                            "example": 78
+                                                        },
+                                                        "rating": {
+                                                            "type": "number",
+                                                            "format": "float",
+                                                            "example": 4.4
+                                                        },
+                                                        "review_count": {
+                                                            "type": "integer",
+                                                            "example": 120
+                                                        },
+                                                        "reviews": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "type": "object"
+                                                            }
+                                                        },
+                                                        "website": {
+                                                            "type": "string",
+                                                            "example": "https://example.com"
+                                                        },
+                                                        "maps_url": {
+                                                            "type": "string"
+                                                        },
+                                                        "social_links": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "type": "string"
+                                                            }
+                                                        },
+                                                        "social_profiles": {
+                                                            "type": "array",
+                                                            "items": {
+                                                                "properties": {
+                                                                    "platform": {
+                                                                        "type": "string",
+                                                                        "example": "facebook"
+                                                                    },
+                                                                    "url": {
+                                                                        "type": "string",
+                                                                        "example": "https://facebook.com/example"
+                                                                    },
+                                                                    "verified": {
+                                                                        "type": "boolean",
+                                                                        "example": true
+                                                                    },
+                                                                    "source": {
+                                                                        "type": "string",
+                                                                        "example": "website"
+                                                                    }
+                                                                },
+                                                                "type": "object"
+                                                            }
+                                                        },
+                                                        "place_id": {
+                                                            "type": "string"
+                                                        },
+                                                        "name": {
+                                                            "type": "string"
+                                                        },
+                                                        "address": {
+                                                            "type": "string"
+                                                        },
+                                                        "source": {
+                                                            "type": "string",
+                                                            "example": "google_places"
+                                                        }
+                                                    },
+                                                    "type": "object"
                                                 }
                                             },
                                             "type": "object"

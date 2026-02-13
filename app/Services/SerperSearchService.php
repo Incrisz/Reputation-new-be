@@ -4,14 +4,23 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Http;
 
-class SerperSearchService
+class SerperSearchService implements SearchServiceContract
 {
-    private string $serperApiKey;
+    private ?string $serperApiKey;
     private string $serperBaseUrl = 'https://google.serper.dev/search';
+    private array $socialPlatforms = [
+        'facebook',
+        'instagram',
+        'linkedin',
+        'tiktok',
+        'x',
+        'youtube',
+        'threads'
+    ];
 
     public function __construct()
     {
-        $this->serperApiKey = config('services.serper.api_key');
+        $this->serperApiKey = config('services.serper.api_key') ?? '';
     }
 
     /**
@@ -52,6 +61,84 @@ class SerperSearchService
                 'mentions' => []
             ];
         }
+    }
+
+    /**
+     * Search for likely social profile links when a website is unavailable.
+     *
+     * @param string $businessName
+     * @param string|null $location
+     * @return array
+     */
+    public function searchSocialLinks(string $businessName, ?string $location = null): array
+    {
+        try {
+            $profiles = $this->searchSocialProfiles(
+                $businessName,
+                $this->socialPlatforms,
+                null,
+                $location
+            );
+
+            $urls = array_map(function ($profile) {
+                return $profile['url'];
+            }, $profiles);
+
+            return array_values(array_unique($urls));
+        } catch (\Exception $e) {
+            \Log::warning('Serper social link search failed: ' . $e->getMessage());
+            return [];
+        }
+    }
+
+    /**
+     * Search for social profile URLs by platform.
+     *
+     * @param string $businessName
+     * @param array $platforms
+     * @param string|null $country
+     * @param string|null $location
+     * @return array
+     */
+    public function searchSocialProfiles(
+        string $businessName,
+        array $platforms,
+        ?string $country = null,
+        ?string $location = null
+    ): array {
+        if (empty($this->serperApiKey)) {
+            \Log::warning('Serper API key not configured');
+            return [];
+        }
+
+        $profiles = [];
+        $countryCode = $this->normalizeCountry($country);
+
+        foreach ($platforms as $platform) {
+            $query = $this->buildPlatformQuery($businessName, $platform);
+            if ($query === '') {
+                continue;
+            }
+
+            $response = $this->executeRawQuery($query, $countryCode);
+            if (!$response['success']) {
+                continue;
+            }
+
+            $url = $this->selectProfileUrl($response['organic'] ?? [], $platform);
+            if ($url === null) {
+                continue;
+            }
+
+            $profiles[] = [
+                'platform' => $platform,
+                'url' => $url,
+                'verified' => false,
+                'source' => 'serper'
+            ];
+        }
+
+        return $profiles;
     }
 
     /**
@@ -335,6 +422,173 @@ class SerperSearchService
             "{$businessName} site:threads.net",
             "{$businessName} site:youtube.com",
         ];
+    }
+
+    private function buildSocialQueries(string $businessName, ?string $location = null): array
+    {
+        $locationSuffix = $location ? " {$location}" : '';
+        $queries = [
+            "{$businessName}{$locationSuffix} site:twitter.com OR site:x.com",
+            "{$businessName}{$locationSuffix} site:facebook.com",
+            "{$businessName}{$locationSuffix} site:linkedin.com",
+            "{$businessName}{$locationSuffix} site:instagram.com",
+            "{$businessName}{$locationSuffix} site:tiktok.com",
+            "{$businessName}{$locationSuffix} site:threads.net",
+            "{$businessName}{$locationSuffix} site:youtube.com",
+        ];
+
+        return array_values(array_unique($queries));
+    }
+
+    private function buildPlatformQuery(string $businessName, string $platform): string
+    {
+        $businessName = trim($businessName);
+        if ($businessName === '') {
+            return '';
+        }
+
+        return match ($platform) {
+            'x' => "{$businessName} X",
+            'youtube' => "{$businessName} YouTube channel",
+            'tiktok' => "{$businessName} TikTok",
+            default => "{$businessName} site:" . $this->getPlatformDomain($platform)
+        };
+    }
+
+    private function getPlatformDomain(string $platform): string
+    {
+        return match ($platform) {
+            'facebook' => 'facebook.com',
+            'instagram' => 'instagram.com',
+            'linkedin' => 'linkedin.com',
+            'tiktok' => 'tiktok.com',
+            'x' => 'x.com',
+            'youtube' => 'youtube.com',
+            'threads' => 'threads.net',
+            default => ''
+        };
+    }
+
+    private function normalizeCountry(?string $country): string
+    {
+        $country = $country ? strtolower(trim($country)) : '';
+        if ($country === '' || strlen($country) !== 2) {
+            return 'us';
+        }
+        return $country;
+    }
+
+    private function executeRawQuery(string $query, string $country): array
+    {
+        try {
+            $response = Http::withHeaders([
+                'X-API-KEY' => $this->serperApiKey,
+                'Content-Type' => 'application/json'
+            ])->post($this->serperBaseUrl, [
+                'q' => $query,
+                'num' => 10,
+                'gl' => $country,
+                'hl' => 'en'
+            ]);
+
+            if ($response->failed()) {
+                return [
+                    'success' => false
+                ];
+            }
+
+            $data = $response->json();
+
+            return [
+                'success' => true,
+                'organic' => $data['organic'] ?? []
+            ];
+        } catch (\Exception $e) {
+            \Log::warning('Serper raw query failed: ' . $e->getMessage());
+            return [
+                'success' => false
+            ];
+        }
+    }
+
+    private function selectProfileUrl(array $organicResults, string $platform): ?string
+    {
+        foreach ($organicResults as $result) {
+            $url = $result['link'] ?? '';
+            if ($url === '') {
+                continue;
+            }
+
+            if ($this->isLikelySocialProfile($platform, $url)) {
+                return $url;
+            }
+        }
+
+        return null;
+    }
+
+    private function isLikelySocialProfile(string $platform, string $url): bool
+    {
+        $lower = strtolower($url);
+        $parts = parse_url($lower);
+        $path = $parts['path'] ?? '';
+        $host = $parts['host'] ?? '';
+        if (!$this->matchesPlatformDomain($platform, $host)) {
+            return false;
+        }
+
+        if ($platform === 'x') {
+            return !str_contains($path, '/status/');
+        }
+
+        if ($platform === 'facebook') {
+            return !preg_match('#/(posts|photos|videos|watch|permalink|story)\b#', $path);
+        }
+
+        if ($platform === 'instagram') {
+            return !preg_match('#/(p|reel|tv|stories)/#', $path);
+        }
+
+        if ($platform === 'tiktok') {
+            return (bool) preg_match('#/@[^/]+/?$#', $path);
+        }
+
+        if ($platform === 'linkedin') {
+            return (bool) preg_match('#/(company|in|school|showcase)/#', $path)
+                && !preg_match('#/(feed|posts|pulse)/#', $path);
+        }
+
+        if ($platform === 'youtube') {
+            return (bool) preg_match('#/(channel|c|@|user)#', $path) && !str_contains($path, '/watch');
+        }
+
+        if ($platform === 'threads') {
+            return !preg_match('#/post/#', $path);
+        }
+
+        return false;
+    }
+
+    private function matchesPlatformDomain(string $platform, string $host): bool
+    {
+        $domains = [];
+
+        if ($platform === 'x') {
+            $domains = ['x.com', 'twitter.com'];
+        } else {
+            $domain = $this->getPlatformDomain($platform);
+            if ($domain !== '') {
+                $domains[] = $domain;
+            }
+        }
+
+        foreach ($domains as $domain) {
+            if ($host === $domain || str_ends_with($host, '.' . $domain)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

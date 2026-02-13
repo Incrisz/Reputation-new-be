@@ -7,6 +7,10 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::get('/reputation/flow', function () {
+    return view('reputation.scan');
+});
+
 Route::get('/api/docs', [SwaggerController::class, 'index'])->name('swagger.ui');
 Route::get('/api/docs/spec', [SwaggerController::class, 'spec'])->name('swagger.spec');
 Route::get('/api/docs/status', [SwaggerController::class, 'status'])->name('swagger.status');

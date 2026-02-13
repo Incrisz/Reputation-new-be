@@ -6,13 +6,15 @@ use Illuminate\Support\Facades\Http;
 
 class OpenAISentimentAnalyzer
 {
+    private SearchServiceContract $searchService;
     private string $provider;
     private string $apiKey;
     private string $model;
     private string $baseUrl;
 
-    public function __construct()
+    public function __construct(SearchServiceContract $searchService)
     {
+        $this->searchService = $searchService;
         $this->provider = config('services.llm.provider');
         
         if ($this->provider === 'openrouter') {
@@ -61,7 +63,7 @@ class OpenAISentimentAnalyzer
             try {
                 // Extract content if not already done
                 if (empty($mention['content'])) {
-                    $mention['content'] = app(SerperSearchService::class)->extractContent($mention['url']);
+                    $mention['content'] = $this->searchService->extractContent($mention['url']);
                 }
 
                 if (empty($mention['content'])) {

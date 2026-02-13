@@ -4,24 +4,30 @@ namespace App\Services;
 
 class ReputationScanService
 {
-    private SerperSearchService $searchService;
+    private SearchServiceContract $searchService;
     private OpenAISentimentAnalyzer $sentimentAnalyzer;
     private ReputationScoringEngine $scoringEngine;
     private RecommendationGenerator $recommendationGenerator;
     private ReputationAuditSynthesizer $auditSynthesizer;
+    private GooglePlacesService $placesService;
+    private OnlineProfileScoringEngine $onlineProfileScoringEngine;
 
     public function __construct(
-        SerperSearchService $searchService,
+        SearchServiceContract $searchService,
         OpenAISentimentAnalyzer $sentimentAnalyzer,
         ReputationScoringEngine $scoringEngine,
         RecommendationGenerator $recommendationGenerator,
-        ReputationAuditSynthesizer $auditSynthesizer
+        ReputationAuditSynthesizer $auditSynthesizer,
+        GooglePlacesService $placesService,
+        OnlineProfileScoringEngine $onlineProfileScoringEngine
     ) {
         $this->searchService = $searchService;
         $this->sentimentAnalyzer = $sentimentAnalyzer;
         $this->scoringEngine = $scoringEngine;
         $this->recommendationGenerator = $recommendationGenerator;
         $this->auditSynthesizer = $auditSynthesizer;
+        $this->placesService = $placesService;
+        $this->onlineProfileScoringEngine = $onlineProfileScoringEngine;
     }
 
     /**
@@ -36,6 +42,66 @@ class ReputationScanService
             $businessName = $businessData['business_name'] ?? '';
             $location = $businessData['verified_location'] ?? null;
             $industry = $businessData['industry'] ?? null;
+            $phone = $businessData['verified_phone'] ?? null;
+            $website = $businessData['verified_website'] ?? null;
+            $placeId = $businessData['place_id'] ?? null;
+            $skipPlaces = (bool) ($businessData['skip_places'] ?? false);
+            $country = $businessData['country'] ?? null;
+
+            if ($skipPlaces) {
+                $placesProfile = [
+                    'success' => false,
+                    'found' => false,
+                    'reason' => 'skipped'
+                ];
+            } else {
+                $placesProfile = $this->placesService->fetchProfile(
+                    $businessName,
+                    $location,
+                    $phone,
+                    $website,
+                    $placeId
+                );
+            }
+
+            $visibilityScore = $this->onlineProfileScoringEngine->calculate(
+                $placesProfile['rating'] ?? null,
+                $placesProfile['review_count'] ?? null
+            );
+            $socialProfiles = $placesProfile['social_profiles'] ?? [];
+            if (empty($socialProfiles) && !empty($website)) {
+                $socialProfiles = $this->placesService->extractSocialProfilesFromWebsite($website);
+            }
+            $platforms = ['facebook', 'instagram', 'linkedin', 'tiktok', 'x', 'youtube', 'threads'];
+            $existingPlatforms = [];
+            foreach ($socialProfiles as $profile) {
+                $platformKey = $profile['platform'] ?? null;
+                if ($platformKey) {
+                    $existingPlatforms[$platformKey] = true;
+                }
+            }
+
+            $missingPlatforms = array_values(array_diff($platforms, array_keys($existingPlatforms)));
+            if (!empty($missingPlatforms) && $businessName !== '') {
+                $fallbackProfiles = $this->searchService->searchSocialProfiles(
+                    $businessName,
+                    $missingPlatforms,
+                    $country,
+                    $location
+                );
+
+                foreach ($fallbackProfiles as $profile) {
+                    $platformKey = $profile['platform'] ?? null;
+                    if ($platformKey && !isset($existingPlatforms[$platformKey])) {
+                        $socialProfiles[] = $profile;
+                        $existingPlatforms[$platformKey] = true;
+                    }
+                }
+            }
+
+            $socialLinks = array_values(array_unique(array_map(function ($profile) {
+                return $profile['url'];
+            }, $socialProfiles)));
 
             // Step 2: Search for mentions
             $searchResult = $this->searchService->search($businessName, $location);
@@ -94,7 +160,22 @@ class ReputationScanService
                     'top_themes' => $analysis['themes'],
                     'top_mentions' => $analysis['top_mentions'],
                     'recommendations' => $recommendations,
-                    'audit' => $auditResult['success'] ? $auditResult['audit'] : null
+                    'audit' => $auditResult['success'] ? $auditResult['audit'] : null,
+                    'online_profile' => [
+                        'found' => $placesProfile['found'] ?? false,
+                        'visibility_score' => $visibilityScore['visibility_score'] ?? null,
+                        'rating' => $placesProfile['rating'] ?? null,
+                        'review_count' => $placesProfile['review_count'] ?? null,
+                        'reviews' => $placesProfile['reviews'] ?? [],
+                        'website' => $placesProfile['website'] ?? null,
+                        'maps_url' => $placesProfile['maps_url'] ?? null,
+                        'social_links' => $socialLinks,
+                        'social_profiles' => $socialProfiles,
+                        'place_id' => $placesProfile['place_id'] ?? null,
+                        'name' => $placesProfile['name'] ?? null,
+                        'address' => $placesProfile['address'] ?? null,
+                        'source' => $placesProfile['source'] ?? null
+                    ]
                 ]
             ];
 

@@ -17,30 +17,48 @@ class BusinessVerificationService
         $hasWebsite = !empty($data['website']);
         $hasPhone = !empty($data['phone']);
         $hasLocation = !empty($data['location']);
+        $hasBusinessName = !empty($data['business_name']);
 
         // Path A: Website verification
         if ($hasWebsite) {
-            return $this->verifyByWebsite(
+            $result = $this->verifyByWebsite(
                 $data['website'],
                 $data['business_name'] ?? null,
                 $data['industry'] ?? null
             );
+            return $this->attachContext($result, $data);
         }
 
         // Path B: Phone + Location verification
         if ($hasPhone && $hasLocation) {
-            return $this->verifyByPhoneLocation(
+            $result = $this->verifyByPhoneLocation(
                 $data['phone'],
                 $data['location'],
-                $data['business_name'] ?? null
+                $data['business_name'] ?? null,
+                $data['industry'] ?? null
             );
+            return $this->attachContext($result, $data);
+        }
+
+        // Path C: Business name only (no website required)
+        if ($hasBusinessName) {
+            $result = $this->verifyByName(
+                $data['business_name'],
+                $data['location'] ?? null,
+                $data['phone'] ?? null,
+                $data['industry'] ?? null,
+                $data['place_id'] ?? null,
+                $data['country'] ?? null
+            );
+
+            return $this->attachContext($result, $data);
         }
 
         return [
             'success' => false,
             'error_code' => 'AMBIGUOUS_BUSINESS',
-            'message' => 'Business name alone is too ambiguous',
-            'details' => 'Provide website OR (phone + location)',
+            'message' => 'Missing business identification',
+            'details' => 'Provide business name OR website OR (phone + location)',
             'http_code' => 422
         ];
     }
@@ -142,7 +160,12 @@ class BusinessVerificationService
      * @param string|null $businessName
      * @return array
      */
-    private function verifyByPhoneLocation(string $phone, string $location, ?string $businessName = null): array
+    private function verifyByPhoneLocation(
+        string $phone,
+        string $location,
+        ?string $businessName = null,
+        ?string $industry = null
+    ): array
     {
         try {
             // Phone is the unique identifier
@@ -179,7 +202,7 @@ class BusinessVerificationService
                     'verified_website' => null,
                     'verified_location' => $location,
                     'verified_phone' => $cleanPhone,
-                    'industry' => null
+                    'industry' => $industry
                 ]
             ];
 
@@ -194,6 +217,64 @@ class BusinessVerificationService
                 'http_code' => 500
             ];
         }
+    }
+
+    /**
+     * Verify business by name (no website required).
+     *
+     * @param string $businessName
+     * @param string|null $location
+     * @param string|null $phone
+     * @param string|null $industry
+     * @param string|null $placeId
+     * @return array
+     */
+    private function verifyByName(
+        string $businessName,
+        ?string $location = null,
+        ?string $phone = null,
+        ?string $industry = null,
+        ?string $placeId = null,
+        ?string $country = null
+    ): array {
+        $cleanPhone = null;
+        if (!empty($phone)) {
+            $cleanPhone = preg_replace('/[^\d\+]/', '', $phone);
+        }
+
+        return [
+            'success' => true,
+            'business_data' => [
+                'business_name' => $businessName,
+                'verified_website' => null,
+                'verified_location' => $location,
+                'verified_phone' => $cleanPhone,
+                'industry' => $industry,
+                'place_id' => $placeId,
+                'country' => $country
+            ]
+        ];
+    }
+
+    private function attachContext(array $result, array $data): array
+    {
+        if (!$result['success']) {
+            return $result;
+        }
+
+        $result['business_data']['place_id'] = $data['place_id'] ?? null;
+        $result['business_data']['skip_places'] = (bool) ($data['skip_places'] ?? false);
+        $result['business_data']['country'] = $data['country'] ?? null;
+
+        if (!empty($data['location']) && empty($result['business_data']['verified_location'])) {
+            $result['business_data']['verified_location'] = $data['location'];
+        }
+
+        if (!empty($data['phone']) && empty($result['business_data']['verified_phone'])) {
+            $result['business_data']['verified_phone'] = preg_replace('/[^\d\+]/', '', $data['phone']);
+        }
+
+        return $result;
     }
 
     /**
