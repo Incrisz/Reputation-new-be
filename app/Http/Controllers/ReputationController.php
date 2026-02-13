@@ -6,6 +6,7 @@ use App\Jobs\RunAuditScanJob;
 use App\Models\AuditRun;
 use App\Models\User;
 use App\Services\GooglePlacesService;
+use App\Services\RestrictionService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Validation\ValidationException;
@@ -38,10 +39,15 @@ use Illuminate\Validation\ValidationException;
 class ReputationController extends Controller
 {
     private GooglePlacesService $placesService;
+    private RestrictionService $restrictionService;
 
-    public function __construct(GooglePlacesService $placesService)
+    public function __construct(
+        GooglePlacesService $placesService,
+        RestrictionService $restrictionService
+    )
     {
         $this->placesService = $placesService;
+        $this->restrictionService = $restrictionService;
     }
 
     /**
@@ -289,6 +295,16 @@ class ReputationController extends Controller
             }
 
             // Queue async audit execution and return immediately.
+            $reservation = $this->restrictionService->reserveAuditSlot($auditUser);
+            if (!($reservation['allowed'] ?? false)) {
+                return $this->errorResponse(
+                    $reservation['code'] ?? 'PLAN_RESTRICTED',
+                    $reservation['message'] ?? 'Your current plan does not allow starting this audit.',
+                    $reservation['details'] ?? null,
+                    403
+                );
+            }
+
             $auditRun = $this->createAuditRun(
                 $request,
                 $validated,
@@ -301,6 +317,7 @@ class ReputationController extends Controller
             );
 
             if (!$auditRun) {
+                $this->restrictionService->releaseAuditSlot($auditUser);
                 return $this->errorResponse(
                     'AUDIT_CREATE_FAILED',
                     'Unable to start your audit right now. Please try again.',
@@ -309,7 +326,18 @@ class ReputationController extends Controller
                 );
             }
 
-            RunAuditScanJob::dispatch($auditRun->id);
+            try {
+                RunAuditScanJob::dispatch($auditRun->id);
+            } catch (\Throwable $e) {
+                $this->restrictionService->releaseAuditSlot($auditUser);
+
+                return $this->errorResponse(
+                    'AUDIT_QUEUE_FAILED',
+                    'Unable to queue your audit right now. Please try again.',
+                    null,
+                    500
+                );
+            }
 
             return response()->json([
                 'status' => 'queued',

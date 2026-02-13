@@ -6,6 +6,8 @@ use App\Mail\AuditCompletedMail;
 use App\Models\AuditRun;
 use App\Services\BusinessVerificationService;
 use App\Services\ReputationScanService;
+use App\Services\RestrictionService;
+use App\Services\UsageService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Mail;
@@ -24,7 +26,9 @@ class RunAuditScanJob implements ShouldQueue
 
     public function handle(
         BusinessVerificationService $verificationService,
-        ReputationScanService $scanService
+        ReputationScanService $scanService,
+        UsageService $usageService,
+        RestrictionService $restrictionService
     ): void {
         $auditRun = AuditRun::query()->find($this->auditRunId);
         if (!$auditRun) {
@@ -56,6 +60,7 @@ class RunAuditScanJob implements ShouldQueue
                 ],
             ])->save();
 
+            $this->finalizeAuditCounters($auditRun, $usageService, $restrictionService);
             $this->sendCompletionEmail($auditRun);
             return;
         }
@@ -78,6 +83,7 @@ class RunAuditScanJob implements ShouldQueue
                 ],
             ])->save();
 
+            $this->finalizeAuditCounters($auditRun, $usageService, $restrictionService);
             $this->sendCompletionEmail($auditRun);
             return;
         }
@@ -108,6 +114,7 @@ class RunAuditScanJob implements ShouldQueue
             'response_payload' => $successResponse,
         ])->save();
 
+        $this->finalizeAuditCounters($auditRun, $usageService, $restrictionService);
         $this->sendCompletionEmail($auditRun);
     }
 
@@ -129,7 +136,32 @@ class RunAuditScanJob implements ShouldQueue
             ],
         ])->save();
 
+        $restrictionService = app(RestrictionService::class);
+        $usageService = app(UsageService::class);
+        $user = $auditRun->user()->first();
+        if ($user) {
+            $restrictionService->releaseAuditSlot($user);
+        }
+        if ($user && $restrictionService->plansAreActive()) {
+            $usageService->incrementUsage($user, UsageService::FEATURE_AUDITS_COMPLETED);
+        }
         $this->sendCompletionEmail($auditRun);
+    }
+
+    private function finalizeAuditCounters(
+        AuditRun $auditRun,
+        UsageService $usageService,
+        RestrictionService $restrictionService
+    ): void {
+        $user = $auditRun->user()->first();
+        if (!$user) {
+            return;
+        }
+
+        $restrictionService->releaseAuditSlot($user);
+        if ($restrictionService->plansAreActive()) {
+            $usageService->incrementUsage($user, UsageService::FEATURE_AUDITS_COMPLETED);
+        }
     }
 
     private function sendCompletionEmail(AuditRun $auditRun): void

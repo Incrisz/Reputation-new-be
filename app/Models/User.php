@@ -5,6 +5,7 @@ namespace App\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 
@@ -71,5 +72,20 @@ class User extends Authenticatable
     public function auditRuns(): HasMany
     {
         return $this->hasMany(AuditRun::class);
+    }
+
+    public function subscriptions(): HasMany
+    {
+        return $this->hasMany(UserSubscription::class);
+    }
+
+    public function usageTracking(): HasMany
+    {
+        return $this->hasMany(UsageTracking::class);
+    }
+
+    public function auditQueueLimit(): HasOne
+    {
+        return $this->hasOne(AuditQueueLimit::class);
     }
 }
