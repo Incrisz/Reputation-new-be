@@ -22,6 +22,7 @@ class User extends Authenticatable
     protected $fillable = [
         'name',
         'email',
+        'role',
         'password',
         'registration_provider',
         'google_id',
@@ -97,5 +98,10 @@ class User extends Authenticatable
     public function auditQueueLimit(): HasOne
     {
         return $this->hasOne(AuditQueueLimit::class);
+    }
+
+    public function isAdmin(): bool
+    {
+        return $this->role === 'admin';
     }
 }

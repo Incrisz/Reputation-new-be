@@ -226,6 +226,16 @@ class ReputationController extends Controller
             // Validate incoming request
             $validated = $this->validateScanRequest($request);
             $auditUser = $this->resolveAuditUser($validated);
+
+            if ($auditUser && $auditUser->isAdmin()) {
+                return $this->errorResponse(
+                    'ADMIN_AUDIT_FORBIDDEN',
+                    'Admin accounts cannot perform audits.',
+                    null,
+                    403
+                );
+            }
+
             $existingAudit = $this->resolveExistingAuditRun($validated, $auditUser);
 
             $placeId = $validated['place_id'] ?? null;
@@ -385,6 +395,15 @@ class ReputationController extends Controller
                 return $this->errorResponse('USER_NOT_FOUND', 'User not found.', null, 404);
             }
 
+            if ($user->isAdmin()) {
+                return $this->errorResponse(
+                    'ADMIN_AUDIT_FORBIDDEN',
+                    'Admin accounts cannot perform audits.',
+                    null,
+                    403
+                );
+            }
+
             $limit = (int) ($validated['limit'] ?? 50);
             $audits = AuditRun::query()
                 ->where('user_id', $user->id)
@@ -421,6 +440,15 @@ class ReputationController extends Controller
             $user = $this->resolveAuditUser($validated);
             if (!$user) {
                 return $this->errorResponse('USER_NOT_FOUND', 'User not found.', null, 404);
+            }
+
+            if ($user->isAdmin()) {
+                return $this->errorResponse(
+                    'ADMIN_AUDIT_FORBIDDEN',
+                    'Admin accounts cannot perform audits.',
+                    null,
+                    403
+                );
             }
 
             $auditRun = AuditRun::query()

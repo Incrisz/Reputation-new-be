@@ -553,6 +553,7 @@ class AuthController extends Controller
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
+            'role' => $user->role,
             'registration_provider' => $user->registration_provider,
             'avatar_url' => $user->avatar_url,
             'phone' => $user->phone,

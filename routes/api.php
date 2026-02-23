@@ -1,7 +1,6 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\AdminPlanController;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\BillingController;
 use App\Http\Controllers\ReputationController;
@@ -107,16 +106,4 @@ Route::middleware('api')->group(function () {
         ->middleware('throttle:240,1')
         ->name('billing.stripe.webhook');
 
-    // Admin-ready plan management endpoints (guarded by X-Admin-Key)
-    Route::post('/admin/plans/custom', [AdminPlanController::class, 'createCustomPlan'])
-        ->middleware('throttle:20,1')
-        ->name('admin.plans.custom');
-
-    Route::post('/admin/company-plan-allocations', [AdminPlanController::class, 'upsertCompanyAllocation'])
-        ->middleware('throttle:20,1')
-        ->name('admin.company-plan-allocations.upsert');
-
-    Route::get('/admin/company-plan-allocations', [AdminPlanController::class, 'companyAllocations'])
-        ->middleware('throttle:20,1')
-        ->name('admin.company-plan-allocations.list');
 });

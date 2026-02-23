@@ -171,6 +171,31 @@ class ReputationControllerTest extends TestCase
         });
     }
 
+    public function test_admin_user_cannot_start_audit_scan(): void
+    {
+        Queue::fake();
+
+        $adminUser = User::factory()->create([
+            'email' => 'admin-audit@example.com',
+            'role' => 'admin',
+        ]);
+
+        $response = $this->postJson('/api/reputation/scan', [
+            'user_id' => $adminUser->id,
+            'business_name' => 'Admin Test Corp',
+            'website' => 'https://admin-audit.test',
+            'location' => 'Austin, TX',
+            'skip_places' => true,
+        ]);
+
+        $response
+            ->assertStatus(403)
+            ->assertJsonPath('status', 'error')
+            ->assertJsonPath('code', 'ADMIN_AUDIT_FORBIDDEN');
+
+        Queue::assertNothingPushed();
+    }
+
     public function test_history_returns_only_requested_users_audits(): void
     {
         $userOne = User::factory()->create([
